@@ -504,7 +504,7 @@ def effect_11(hsv_values):
     return hsv_values
 
 def effect_12(hsv_values):
-    """Tetris Block Fall (Top-Down) with Standard Tetris Colors in GRB format and Dispersal."""
+    """Tetris Block Fall (Bottom-Up) with Standard Tetris Colors in GRB format and Dispersal."""
     block_colors = [
         {"name": "Cyan",    "rgb": (255, 0, 255)}, 
         {"name": "Yellow",  "rgb": (255, 255, 0)}, 
@@ -518,38 +518,45 @@ def effect_12(hsv_values):
     max_block_length = 10
     min_block_length = 3
     frame_delay = 0.05
-    stacked_height = 0
+    stacked_height = NUM_LEDS - 1  # Correctly initialize to the last LED index
     blocks = []
 
+    # Clear the LED strip
     for i in range(NUM_LEDS):
         hsv_values[i] = (0.0, 0.0, 0.0)
         led_strip.set_rgb(i, 0, 0, 0)
 
-    start_time = time.ticks_ms()
-
-    while stacked_height < NUM_LEDS:
+    # Start stacking blocks
+    while stacked_height >= 0:
         block = block_colors[randrange(len(block_colors))]
         block_length = randrange(min_block_length, max_block_length + 1)
-        
+
         print(f"Block Color: {block['name']}, Length: {block_length}")
 
-        block_position = NUM_LEDS - 1
+        block_position = 0  # Start at the bottom
 
-        while block_position - block_length + 1 > stacked_height:
-            if block_position + 1 < NUM_LEDS:
-                for j in range(block_position - block_length + 2, block_position + 2):
+        while block_position + block_length - 1 <= stacked_height:
+            # Clear the previous position of the block
+            if block_position > 0:
+                for j in range(block_position - 1, block_position - 1 + block_length):
                     if 0 <= j < NUM_LEDS:
                         led_strip.set_rgb(j, 0, 0, 0)
 
-            for j in range(block_position, block_position - block_length, -1):
+            # Draw the block at the new position
+            for j in range(block_position, block_position + block_length):
                 if 0 <= j < NUM_LEDS:
                     led_strip.set_rgb(j, *block["rgb"])
 
-            block_position -= 1
+            block_position += 1  # Move the block upward
             time.sleep(frame_delay)
 
-        blocks.append({"start": stacked_height, "end": stacked_height + block_length, "color": block["rgb"]})
-        stacked_height += block_length
+        # Store the block's final resting position
+        blocks.append({
+            "start": block_position - 1, 
+            "end": block_position + block_length - 1, 
+            "color": block["rgb"]
+        })
+        stacked_height -= block_length  # Update the stacked height
 
     print("Blocks stacked. Pausing for 3 seconds...")
     time.sleep(3)
@@ -559,25 +566,35 @@ def effect_12(hsv_values):
 
     return hsv_values
 
+
 def disperse_blocks(blocks, frame_delay, hsv_values):
-    """Disperse blocks randomly after stacking."""
+    """Disperse blocks randomly downward after stacking."""
     while blocks:
         for block in blocks:
-            speed = uniform(0.02, 0.1)
-            if block["start"] > 0:
-                for j in range(block["end"] - 1, block["start"] - 1, -1):
-                    if j < NUM_LEDS:
+            # Check if the block can still move downward
+            if block["end"] < NUM_LEDS - 1:  # Ensure within bounds
+                # Clear the block's current position
+                for j in range(block["start"], block["end"] + 1):  # Inclusive of `end`
+                    if 0 <= j < NUM_LEDS:
                         led_strip.set_rgb(j, 0, 0, 0)
-                        if j - 1 >= 0:
-                            led_strip.set_rgb(j - 1, *block["color"])
 
-                block["start"] -= 1
-                block["end"] -= 1
+                # Move the block downward
+                block["start"] += 1
+                block["end"] += 1
+
+                # Draw the block at the new position
+                for j in range(block["start"], block["end"] + 1):  # Inclusive of `end`
+                    if 0 <= j < NUM_LEDS:
+                        led_strip.set_rgb(j, *block["color"])
             else:
+                # Remove the block once it's completely off the strip
                 blocks.remove(block)
 
         time.sleep(frame_delay)
+
     return hsv_values
+
+
 
 def effect_13(hsv_values):
     """Simulates torrential rain with fast-moving blue raindrops on the LED strip."""
@@ -1037,7 +1054,7 @@ def effect_25(hsv_values):
 
 def effect_26(hsv_values):
     """Ethereal Vortex: A swirling vortex effect, with colors spiraling inwards and outwards."""
-    vortex_speed = 0.15
+    vortex_speed = 50
     hue_variation = 0.3
     spiral_tightness = 0.05
 
@@ -1051,7 +1068,7 @@ def effect_26(hsv_values):
             hsv_values[i] = (hue, 1.0, brightness)
             led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
-        time.sleep(0.02)
+        time.sleep(0.6)
 
     return hsv_values
 
@@ -1235,9 +1252,9 @@ def effect_29(hsv_values):
 
 def effect_30(hsv_values):
     """Gravitational Wave Ripples: Smooth, undulating ripples that simulate space-time disturbances."""
-    ripple_speed = 0.05
-    ripple_amplitude = 0.3
-    hue_shift_speed = 0.005
+    ripple_speed = 1
+    ripple_amplitude = 0.001
+    hue_shift_speed = 5
 
     start_time = time.ticks_ms()
 
@@ -2579,7 +2596,7 @@ def effect_77(hsv_values):
 # tester
 '''
 effects = [
-    effect_40
+    effect_26
     ]
 '''
 # List of effects
