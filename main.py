@@ -493,6 +493,7 @@ def effect_11(hsv_values):
 
             if star["brightness"] >= max_brightness:
                 star["direction"] = -1
+                star["brightness"] = max_brightness
             elif star["brightness"] <= min_brightness:
                 star["direction"] = 1
 
@@ -745,7 +746,7 @@ def effect_16(hsv_values):
                 if 0 <= pos < NUM_LEDS:
                     brightness = max_brightness - ((i / drip_length) * (max_brightness - min_brightness))
                     r, g, b = hsv_to_rgb(hue, saturation, brightness)
-                    led_strip.set_rgb(pos, int(r * 255), int(g * 255), int(b * 255))
+                    led_strip.set_rgb(pos, int(r), int(g), int(b))
 
             position += 1  # Move the drip downward
             speed *= acceleration  # Increase the speed
@@ -1910,6 +1911,8 @@ def effect_53(hsv_values):
                 distance = abs(center - i)
                 hue = randrange(360) / 360.0
                 brightness = max(0, 1 - (distance - t) / 10)
+                if brightness > 1:
+                    brightness = 1
                 if brightness > 0:
                     hsv_values[i] = (hue, 1.0, brightness)
                 led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
@@ -2580,7 +2583,9 @@ def effect_77(hsv_values):
                     hue = hues[index] * (1 - ratio) + hues[next_index] * ratio
 
                 # Apply chosen formula for brightness
-                brightness = pattern_formula(i, t) * brightness_variation * fade_factor
+                brightness = max(0, pattern_formula(i, t) * brightness_variation * fade_factor)
+                if brightness > 1:
+                    brightness = 1
 
                 hsv_values[i] = (hue, 1.0, brightness)
                 led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
