@@ -2087,36 +2087,60 @@ def effect_47(hsv_values):
     return hsv_values
 
 def effect_48(hsv_values):
-    """Color pulsating wave that moves back and forth across the strip."""
-    wave_length = 20  # Length of the wave
-    wave_speed = 0.05  # Speed of the wave's movement
-    hue_shift = 0.01  # How quickly the hue changes over time
+    """Color pulsating wave that moves back and forth, starting/ending off-strip."""
+    wave_length = 20      # Physical length of the wave
+    step = 0.7           # How many LEDs the wave center moves per frame
+    hue_shift = 0.01      # Hue variation along the strip
+
+    # Start fully off the "left" side
+    center = -wave_length
+    direction = 1  # 1 = left→right, -1 = right→left
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for t in range(NUM_LEDS * 2):
-            for i in range(NUM_LEDS):
-                distance = abs((t % NUM_LEDS) - i)
-                if distance < wave_length:
-                    # Calculate the hue and brightness for each part of the wave
-                    hue = (i * hue_shift) % 1.0
-                    brightness = (1 + math.sin(distance * math.pi / wave_length)) / 2
-                    hsv_values[i] = (hue, 1.0, brightness)
-                else:
-                    # Set LEDs outside the wave to be off
-                    hsv_values[i] = (0.0, 0.0, 0.0)
-                
-                # Set the LED color
-                led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+        # Optional: fade existing content slightly instead of hard clearing
+        # so this effect can blend with previous ones better.
+        # Comment OUT this block if you want hard black outside the wave.
+        fade_factor = 0.7
+        for i in range(NUM_LEDS):
+            h, s, v = hsv_values[i]
+            v *= fade_factor
+            hsv_values[i] = (h, s, v)
 
-            # Reverse the wave's direction after it reaches the end
-            if t == NUM_LEDS:
-                wave_speed = -wave_speed
+        # Draw the wave
+        for i in range(NUM_LEDS):
+            distance = abs(i - center)
 
-            time.sleep(abs(wave_speed))
+            if distance < wave_length:
+                # Nice soft “blob” profile using a sine
+                # distance 0 → peak, distance = wave_length → 0
+                phase = (1.0 - distance / wave_length) * math.pi
+                brightness = max(0.0, math.sin(phase))
+
+                hue = (i * hue_shift) % 1.0
+                hsv_values[i] = (hue, 1.0, brightness)
+            # else: keep whatever faded value was there
+
+            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+
+        # Move the wave center
+        center += direction * step
+
+        # When the wave has completely left one side, reverse direction
+        if direction == 1 and center - wave_length > NUM_LEDS:
+            # fully off the right side → flip and start off the right
+            direction = -1
+            center = NUM_LEDS + wave_length
+        elif direction == -1 and center + wave_length < 0:
+            # fully off the left side → flip and start off the left
+            direction = 1
+            center = -wave_length
+
+        time.sleep(0.03)
 
     return hsv_values
+
 
 def effect_49(hsv_values):
     """Gentle rolling clouds effect with soft white and blue hues."""
