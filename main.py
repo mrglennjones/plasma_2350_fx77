@@ -1,113 +1,347 @@
-import plasma
-from plasma import plasma2040
-from pimoroni import RGBLED
+# fx_77_starfield_startup.py
+
 import time
 import math
-from random import randrange, uniform, choice
-import gc  # Import garbage collection module
+import gc
+from random import randrange, uniform, random, choice
 
-# Set how many LEDs you have
+import plasma
+from machine import Pin
+
+# -----------------------------
+# SHARED CONFIG / SETUP
+# -----------------------------
+
 NUM_LEDS = 66
 
-# Define the onboard RGB LED
-led = RGBLED(plasma2040.LED_R, plasma2040.LED_G, plasma2040.LED_B)
-led.set_rgb(0, 0, 0)  # Start with the LED off
-
-# Pick LED type
-led_strip = plasma.WS2812(NUM_LEDS, 0, 0, plasma2040.DAT)  # WS2812 / NeoPixel™ LEDs
-
-# Timeout duration in milliseconds (e.g., 10000 ms = 10 seconds)
-TIMEOUT_DURATION = 20000 
-
-# Start updating the LED strip
+# Your strip tested as G → B → R, so use BGR order:
+led_strip = plasma.WS2812(
+    NUM_LEDS,
+    color_order=plasma.COLOR_ORDER_BRG
+)
 led_strip.start()
 
+# -----------------------------
+# BUTTON SETUP (Plasma 2350 W firmware v1.0.0 style)
+# -----------------------------
+
+# -----------------------------
+# BUTTON SETUP (Plasma 2350 W / others)
+# -----------------------------
+
+button_pins = []
+
+# Try all sensible names – whichever exist will be used
+for name in ("USER_SW", "BUTTON_A", "SW_A"):
+    try:
+        # Most Pimoroni-style user buttons are ACTIVE-LOW with an internal pull-up
+        pin = Pin(name, Pin.IN, Pin.PULL_UP)
+        button_pins.append(pin)
+    except Exception:
+        pass
+
+
+def button_pressed():
+    """Return True if any known button pin is pressed (active-low)."""
+    for p in button_pins:
+        # Active-low: 0 = pressed, 1 = not pressed
+        if p.value() == 0:
+            return True
+    return False
+
+
+# ============================================================
+# STARFIELD + COMET DEFAULT EFFECT
+# ============================================================
+
+# -----------------------------
+# STARFIELD CONFIG
+# -----------------------------
+
+# Overall brightness range for stars
+STAR_MIN_BRIGHT = 0.02     # very dim
+STAR_MAX_BRIGHT = 0.8      # brightest "hero" stars
+
+# How fast stars change brightness (lower = smoother, slower twinkle)
+STAR_FADE_SPEED = 0.01     # change per frame towards target
+
+# How often we pick a new "target" brightness per star (probability per frame)
+STAR_NEW_TARGET_CHANCE = 0.01   # 1% chance per star per frame
+
+# Slight colour variation so "white" isn't dead flat (looks nicer)
+STAR_SATURATION_MAX = 0.05  # 0.0 = pure white, up to 0.05 still looks mostly white
+STAR_HUE_SPREAD = 20        # degrees around 220° (cool white / very pale blue)
+
+# Base frame speed for star twinkling
+TWINKLE_FRAME_DELAY = 0.05  # seconds between frames (~20 FPS)
+
+# --- Comets ---
+
+# Roughly how often a comet appears (probability per twinkle frame).
+COMET_BASE_CHANCE = 0.00015
+
+COMET_MIN_TRAIL = 3
+COMET_MAX_TRAIL = 8
+
+COMET_MIN_SPEED = 0.015     # faster comet
+COMET_MAX_SPEED = 0.035     # slower comet
+
+COMET_HEAD_BRIGHT_MIN = 0.6
+COMET_HEAD_BRIGHT_MAX = 1.0
+
+# How much brighter than the background a comet can "burn in" as afterglow
+AFTERGLOW_MAX = 0.4
+
+# Comet colour (cool white / very pale blue)
+COMET_HUE = 220 / 360.0     # bluish white
+COMET_SAT = 0.1             # keep low so it still feels mostly white
+
+# -----------------------------
+# STARFIELD STATE
+# -----------------------------
+
+star_current = [0.0] * NUM_LEDS      # current brightness
+star_target = [0.0] * NUM_LEDS       # target brightness
+star_hue = [0.0] * NUM_LEDS          # subtle hue variation
+star_sat = [0.0] * NUM_LEDS          # subtle saturation variation
+
+
+def random_star_brightness():
+    """Return a brightness value with many dim stars and few bright ones."""
+    x = uniform(0.0, 1.0)
+    x = x * x  # bias towards lower values
+    return STAR_MIN_BRIGHT + x * (STAR_MAX_BRIGHT - STAR_MIN_BRIGHT)
+
+
+def init_stars():
+    """Initialise all stars with random brightness and slight colour variation."""
+    for i in range(NUM_LEDS):
+        b = random_star_brightness()
+        star_current[i] = b
+        star_target[i] = random_star_brightness()
+
+        # hue around a cool white (220°), ±STAR_HUE_SPREAD/2
+        hue_offset_deg = uniform(-STAR_HUE_SPREAD / 2, STAR_HUE_SPREAD / 2)
+        star_hue[i] = (220 + hue_offset_deg) / 360.0
+
+        # tiny bit of saturation so it's not dead flat
+        star_sat[i] = uniform(0.0, STAR_SATURATION_MAX)
+
+
+def update_stars():
+    """Move each star towards its target brightness and occasionally choose a new one."""
+    for i in range(NUM_LEDS):
+        # Occasionally choose a new random target brightness
+        if random() < STAR_NEW_TARGET_CHANCE:
+            star_target[i] = random_star_brightness()
+
+        # Smoothly ease current brightness towards target
+        cur = star_current[i]
+        tgt = star_target[i]
+
+        if cur < tgt:
+            cur += STAR_FADE_SPEED
+            if cur > tgt:
+                cur = tgt
+        elif cur > tgt:
+            cur -= STAR_FADE_SPEED
+            if cur < tgt:
+                cur = tgt
+
+        star_current[i] = cur
+
+        # Draw star
+        led_strip.set_hsv(i, star_hue[i], star_sat[i], cur)
+
+
+def run_comet():
+    """Animate a single comet gliding across the strip. Aborts if button is pressed."""
+    trail_len = randrange(COMET_MIN_TRAIL, COMET_MAX_TRAIL + 1)
+    if trail_len > NUM_LEDS:
+        trail_len = NUM_LEDS
+
+    # Random direction
+    direction = 1 if randrange(2) == 0 else -1
+
+    # Random speed and head brightness for variety
+    comet_delay = uniform(COMET_MIN_SPEED, COMET_MAX_SPEED)
+    head_brightness = uniform(COMET_HEAD_BRIGHT_MIN, COMET_HEAD_BRIGHT_MAX)
+
+    if direction == 1:
+        head = -trail_len
+        end = NUM_LEDS + trail_len
+        step = 1
+    else:
+        head = NUM_LEDS + trail_len
+        end = -trail_len
+        step = -1
+
+    while head != end:
+        if button_pressed():
+            # Abort comet immediately if button is pressed
+            return
+
+        # Draw background first
+        for i in range(NUM_LEDS):
+            led_strip.set_hsv(i, star_hue[i], star_sat[i], star_current[i])
+
+        # Draw comet on top
+        for k in range(trail_len):
+            pos = head - k * direction
+            if 0 <= pos < NUM_LEDS:
+                # Fraction along tail: 0 at the end, 1 at the head
+                frac = (trail_len - k) / float(trail_len)
+                # Use squared falloff for a bright head, smooth tail
+                comet_b = head_brightness * (frac * frac)
+
+                # Slight colour gradient: head more coloured, tail whiter
+                tail_sat = COMET_SAT * frac   # more saturated at head
+                tail_hue = COMET_HUE
+
+                led_strip.set_hsv(pos, tail_hue, tail_sat, comet_b)
+
+                # Gentle afterglow: boost star brightness a little, but keep within range
+                glow_boost = comet_b * AFTERGLOW_MAX
+                new_star_b = min(star_current[pos] + glow_boost, STAR_MAX_BRIGHT)
+                star_current[pos] = new_star_b
+
+        time.sleep(comet_delay)
+        head += step
+
+
+def run_starfield_until_button():
+    """Run the starfield + occasional comets until BUTTON A is pressed."""
+    init_stars()
+
+    while True:
+        update_stars()
+
+        # Occasionally launch a comet
+        comet_chance = COMET_BASE_CHANCE * uniform(0.5, 1.5)
+        if random() < comet_chance:
+            run_comet()
+            if button_pressed():
+                break
+
+        # Check button every frame
+        if button_pressed():
+            break
+
+        time.sleep(TWINKLE_FRAME_DELAY)
+
+
+
+
+# ------------------------------------------------
+# COMMON UTILS FOR 77-FX SECTION
+# ------------------------------------------------
+
+# Many effects use this timeout in their while-loops
+#TIMEOUT_DURATION = 20000  # milliseconds (8 seconds per effect, tweak as you like)
+
+# Many effects use this timeout in their while-loops
+MIN_EFFECT_DURATION = 6000    # 6 seconds
+MAX_EFFECT_DURATION = 40000   # 40 seconds
+TIMEOUT_DURATION = MIN_EFFECT_DURATION  # gets overridden for timed effects
+
+# Effects that should be allowed to run their full sequence and NOT be cut off by a random timer.
+# Use 1-based effect numbers here (so effect_40 == 40).
+FULL_RUN_EFFECTS = {
+    12,   # Tetris Block Fall (runs a full stack + disperse sequence)
+    40,   # Bouncing ball to the top + fade-out
+    # Add more here later if you find other 'must finish' animations
+}
+
+
 def hsv_to_rgb(h, s, v):
-    """Converts HSV color space to RGB color space."""
+    """Simple HSV → RGB converter, returns floats 0.0–1.0."""
     if s == 0.0:
-        v = int(v * 255)
         return v, v, v
-    i = int(h * 6.0)  # Assume h is 0-1
+    i = int(h * 6.0)
     f = (h * 6.0) - i
-    p = int(v * (1.0 - s) * 255)
-    q = int(v * (1.0 - s * f) * 255)
-    t = int(v * (1.0 - s * (1.0 - f)) * 255)
-    v = int(v * 255)
+    p = v * (1.0 - s)
+    q = v * (1.0 - s * f)
+    t = v * (1.0 - s * (1.0 - f))
     i = i % 6
     if i == 0:
-        return v, t, p
-    if i == 1:
-        return q, v, p
-    if i == 2:
-        return p, v, t
-    if i == 3:
-        return p, q, v
-    if i == 4:
-        return t, p, v
-    if i == 5:
-        return v, p, q
+        r, g, b = v, t, p
+    elif i == 1:
+        r, g, b = q, v, p
+    elif i == 2:
+        r, g, b = p, v, t
+    elif i == 3:
+        r, g, b = p, q, v
+    elif i == 4:
+        r, g, b = t, p, v
+    else:
+        r, g, b = v, p, q
+    return r, g, b
 
-# Function to perform a smooth crossfade between effects
-def crossfade_effects(effect_from, effect_to, duration=1.0, steps=50):
-    gc.collect()
-    """Smoothly transitions from one effect to another over the given duration."""
-    for step in range(steps):
-        blend = step / steps
-        for i in range(NUM_LEDS):
-            h1, s1, v1 = effect_from[i]
-            h2, s2, v2 = effect_to[i]
 
-            h = h1 * (1 - blend) + h2 * blend
-            s = s1 * (1 - blend) + s2 * blend
-            v = v1 * (1 - blend) + v2 * blend
-
-            led_strip.set_hsv(i, h, s, v)
-
-        time.sleep(duration / steps)
-
-# Effect manager class
 class EffectManager:
     def __init__(self, num_leds):
         self.num_leds = num_leds
-        self.hsv_values = [(0.0, 0.0, 0.0) for _ in range(num_leds)]
-        self.current_effect = 0
-        self.random_mode = True
-
-    def get_random_timeout_duration(self):
-        """Return a random duration between 3 and 20 seconds."""
-        return randrange(3000, 20001)
-
-    def run_effect(self, effect_func):
-        self.timeout_duration = self.get_random_timeout_duration()
-        print(f"Effect {self.current_effect + 1} - Running for {self.timeout_duration / 1000:.2f} seconds")
-        start_time = time.ticks_ms()
-
-        while True:  # Continuously run effects without button check
-            if time.ticks_diff(time.ticks_ms(), start_time) > self.timeout_duration:
-                break
-            self.hsv_values = effect_func(self.hsv_values)
-            self.update_led_strip()
-
-    def update_led_strip(self):
-        for i, (h, s, v) in enumerate(self.hsv_values):
-            led_strip.set_hsv(i, h, s, v)
+        self.current_effect = -1
+        self.hsv_values = [(0.0, 0.0, 0.0)] * num_leds
 
     def select_next_effect(self):
-        print(f"Effects list length: {len(effects)}")
+        """Choose a different random effect each time."""
         if len(effects) <= 1:
-            # If there is only one effect, always select it
             self.current_effect = 0
-        elif self.random_mode:
-            new_effect = self.current_effect
-            # Keep picking until a different effect is chosen
-            while new_effect == self.current_effect:
-                new_effect = randrange(len(effects))
-            self.current_effect = new_effect
-        else:
-            # Cycle to the next effect in order
-            self.current_effect = (self.current_effect + 1) % len(effects)
+            return
 
-# Add your effect functions here...
+        new_fx = self.current_effect
+        while new_fx == self.current_effect:
+            new_fx = randrange(len(effects))
+        self.current_effect = new_fx
+
+    def run_current_effect(self):
+        """Run the currently selected effect.
+
+        - For 'timed' effects: set a random TIMEOUT_DURATION, let the effect honour it.
+        - For 'full-run' effects: just let them do their thing once.
+        """
+        global TIMEOUT_DURATION
+
+        fx_index = self.current_effect          # 0-based
+        fx_number = fx_index + 1                # 1–77
+        fx_fn = effects[fx_index]
+
+        if fx_number in FULL_RUN_EFFECTS:
+            # Full-run: effect controls its own duration completely.
+            self.hsv_values = fx_fn(self.hsv_values)
+        else:
+            # Timed / ambient: push a random duration into the global timeout
+            TIMEOUT_DURATION = get_random_timeout_duration()
+            self.hsv_values = fx_fn(self.hsv_values)
+
+
+
+
+# ============================================================
+# 77 FX SECTION – PASTE YOUR EXISTING CODE HERE
+# ============================================================
+
+# IMPORTANT:
+# - DO NOT re-define NUM_LEDS or led_strip here (they are already defined above).
+# - You *can* paste hsv_to_rgb, hsv_to_grb, EffectManager, all effect_1...effect_77,
+#   your "effects = [...]" list, and "manager = EffectManager(NUM_LEDS)".
+# - DO NOT paste your old "while True: manager.select_next_effect()..." main loop.
+#
+# ---- BEGIN 77 FX BLOCK ----
+
+# Paste everything from:
+#   hsv_to_rgb(...)
+#   class EffectManager:
+#   def effect_1(...):
+#   ...
+#   def effect_77(...):
+#   effects = [ ... ]
+#   manager = EffectManager(NUM_LEDS)
+#
+# right here, below this comment.
+#
+# ---- END 77 FX BLOCK ----
 
 
 # Individual effect implementations
@@ -378,10 +612,16 @@ def effect_9(hsv_values):
     return hsv_values
 
 
+#def hsv_to_grb(h, s, v):
+#    """Converts HSV to GRB color space to accommodate the GRB LED strip."""
+#    r, g, b = hsv_to_rgb(h, s, v)
+#    return g, r, b  # Swap R and G to fit the GRB color order
+
 def hsv_to_grb(h, s, v):
-    """Converts HSV to GRB color space to accommodate the GRB LED strip."""
-    r, g, b = hsv_to_rgb(h, s, v)
-    return g, r, b  # Swap R and G to fit the GRB color order
+    """Converts HSV color space to GRB 0–255 ints for the LED strip."""
+    r, g, b = hsv_to_rgb(h, s, v)  # r,g,b in 0.0–1.0
+    return int(g * 255), int(r * 255), int(b * 255)  # GRB order as ints
+
 
 def effect_10(hsv_values):
     """Improved Lava Lamp Effect with Smooth, Solid Color Blobs and Blended Overlaps (GRB Compatible)."""
@@ -454,10 +694,6 @@ def effect_10(hsv_values):
 
     return hsv_values
 
-def hsv_to_grb(h, s, v):
-    """Converts HSV color space to GRB color space for the LED strip."""
-    r, g, b = hsv_to_rgb(h, s, v)
-    return g, r, b  # Swap red and green for GRB
 
 
 def effect_11(hsv_values):
@@ -1292,30 +1528,99 @@ def effect_31(hsv_values):
 
 
 def effect_32(hsv_values):
-    """Fire effect with varying intensities."""
-    for i in range(NUM_LEDS):
-        hue = 0.3 + randrange(-10, 10) / 100.0
-        brightness = randrange(50, 100) / 100.0
-        hsv_values[i] = (hue, 1.0, brightness)
+    """Fire effect with flickering, varying intensities (ambient + timed)."""
+    BASE_HUE = 0.08          # desired orange
+    HUE_JITTER = 0.03
+    COOLING = 0.6
+    NEW_ENERGY = 0.4
+    MIN_B = 0.05
+
+    start_time = time.ticks_ms()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        for i in range(NUM_LEDS):
+            h_prev, s_prev, v_prev = hsv_values[i]
+
+            # cool down
+            v = v_prev * COOLING
+
+            # add flare
+            target_b = uniform(0, 1)**3
+            v = v * (1.0 - NEW_ENERGY) + target_b * NEW_ENERGY
+            v = max(MIN_B, min(1.0, v))
+
+            # 🔥 FIX: hue shift for GRB strip to appear orange/red
+            hue = BASE_HUE + uniform(-HUE_JITTER, HUE_JITTER)
+            hue = (hue + 0.33) % 1.0  # +120° hue shift to cancel GRB green shift
+
+            hsv_values[i] = (hue, 1.0, v)
+            led_strip.set_hsv(i, hue, 1.0, v)
+
+        time.sleep(0.03)
+
     return hsv_values
+
+
 
 def effect_33(hsv_values):
-    """Sparkle effect with random flickers."""
-    for i in range(NUM_LEDS):
-        hsv_values[i] = (0.0, 0.0, 0.0)
-    for i in range(NUM_LEDS):
-        if randrange(100) < 10:
+    """Sparkle effect with random flickers over a gently fading background."""
+    FADE = 0.85                 # how fast old sparkles fade
+    SPARKLE_DENSITY = 0.12      # fraction of LEDs that may sparkle per frame
+    MIN_B = 0.02
+
+    start_time = time.ticks_ms()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Fade existing pixels
+        for i in range(NUM_LEDS):
+            h, s, v = hsv_values[i]
+            v *= FADE
+            if v < MIN_B:
+                v = 0.0
+            hsv_values[i] = (h, s, v)
+            led_strip.set_hsv(i, h, s, v)
+
+        # Add new sparkles
+        num_new = max(1, int(NUM_LEDS * SPARKLE_DENSITY * random()))
+        for _ in range(num_new):
+            idx = randrange(NUM_LEDS)
             hue = randrange(360) / 360.0
-            hsv_values[i] = (hue, 1.0, 1.0)
+            brightness = uniform(0.5, 1.0)
+            hsv_values[idx] = (hue, 1.0, brightness)
+            led_strip.set_hsv(idx, hue, 1.0, brightness)
+
+        time.sleep(0.04)
+
     return hsv_values
 
+
 def effect_34(hsv_values):
-    """Rotating color bands."""
-    band_width = 5
-    for i in range(NUM_LEDS):
-        hue = ((i // band_width) % 6) / 6.0
-        brightness = 1.0 if (i // band_width) % 2 == 0 else 0.5
-        hsv_values[i] = (hue, 1.0, brightness)
+    """Rotating color bands that slowly drift along the strip."""
+    BAND_WIDTH = 5
+    FAST_BRIGHT = 1.0
+    DIM_BRIGHT = 0.35
+    STEP_DELAY = 0.04
+
+    offset = 0
+    start_time = time.ticks_ms()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        for i in range(NUM_LEDS):
+            band_index = ((i + offset) // BAND_WIDTH)
+            hue = (band_index % 6) / 6.0
+
+            # Alternate bright/dim bands
+            if band_index % 2 == 0:
+                brightness = FAST_BRIGHT
+            else:
+                brightness = DIM_BRIGHT
+
+            hsv_values[i] = (hue, 1.0, brightness)
+            led_strip.set_hsv(i, hue, 1.0, brightness)
+
+        offset = (offset + 1) % (NUM_LEDS * 2)
+        time.sleep(STEP_DELAY)
+
     return hsv_values
 
 def effect_35(hsv_values):
@@ -1479,75 +1784,67 @@ def effect_39(hsv_values):
     return hsv_values
 
 def effect_40(hsv_values):
-    gravity = 0.03  # Gravity to pull the ball upward
-    bounce_damping = 0.85
+    """Single bouncing ball that goes to the top, fades out, then returns."""
+    gravity = 0.03
+    bounce_damping = 0.70   # LOWERED from 0.85 so the motion actually dies out
     fade_speed = 0.01
     pause_duration = 1.0
 
-    start_time = time.ticks_ms()  # Record the start time
-    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        ball_position = 0.0  # Start at the bottom
-        velocity = 0.0  # Initial velocity
-        hue = randrange(360) / 360.0  # Random hue for each ball
-        ball_bouncing = True  # Flag to keep the ball bouncing
+    ball_position = 0.0  # Start at the bottom
+    velocity = 0.0
+    hue = randrange(360) / 360.0
+    ball_bouncing = True
 
-        while ball_bouncing and time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-            # Clear the LED strip
-            for i in range(NUM_LEDS):
-                hsv_values[i] = (0.0, 0.0, 0.0)
+    while ball_bouncing:
+        # Clear the LED strip
+        for i in range(NUM_LEDS):
+            hsv_values[i] = (0.0, 0.0, 0.0)
 
-            # Update velocity and position
-            velocity += gravity
-            ball_position += velocity
+        # Update velocity and position
+        velocity += gravity
+        ball_position += velocity
 
-            # Check if the ball reaches the top and bounces back
-            if ball_position >= NUM_LEDS - 1:
-                ball_position = NUM_LEDS - 1  # Clamp the position at the top
-                velocity = -velocity * bounce_damping  # Reverse and reduce velocity
+        # Check if the ball reaches the top and bounces back
+        if ball_position >= NUM_LEDS - 1:
+            ball_position = NUM_LEDS - 1
+            velocity = -velocity * bounce_damping
 
-                # If the bounce is too small, stop the animation
-                if abs(velocity) < 0.01:
-                    ball_bouncing = False
+            # If the bounce is too small, stop the animation
+            if abs(velocity) < 0.01:
+                ball_bouncing = False
 
-                    # Show the ball at the top and fade it out
-                    hsv_values[NUM_LEDS - 1] = (hue, 1.0, 1.0)
-                    led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, 1.0)
-                    time.sleep(pause_duration)
+                # Show the ball at the top and fade it out
+                hsv_values[NUM_LEDS - 1] = (hue, 1.0, 1.0)
+                led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, 1.0)
+                time.sleep(pause_duration)
 
-                    # Fade out effect
-                    for brightness in [i / 100 for i in range(100, -1, -1)]:
-                        if time.ticks_diff(time.ticks_ms(), start_time) >= TIMEOUT_DURATION:
-                            break
-                        hsv_values[NUM_LEDS - 1] = (hue, 1.0, brightness)
-                        led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, brightness)
-                        time.sleep(fade_speed)
-                    break
+                # Fade out effect
+                for brightness in [i / 100 for i in range(100, -1, -1)]:
+                    hsv_values[NUM_LEDS - 1] = (hue, 1.0, brightness)
+                    led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, brightness)
+                    time.sleep(fade_speed)
+                break
 
-            # Smoothly interpolate between LEDs
-            pos_floor = int(ball_position)
-            pos_ceil = min(pos_floor + 1, NUM_LEDS - 1)
-            brightness_ceil = ball_position - pos_floor
-            brightness_floor = 1.0 - brightness_ceil
+        # Smooth interpolation between LEDs
+        pos_floor = int(ball_position)
+        pos_ceil = min(pos_floor + 1, NUM_LEDS - 1)
+        brightness_ceil = ball_position - pos_floor
+        brightness_floor = 1.0 - brightness_ceil
 
-            # Set the brightness for both positions
-            if 0 <= pos_floor < NUM_LEDS:
-                hsv_values[pos_floor] = (hue, 1.0, brightness_floor)
-            if 0 <= pos_ceil < NUM_LEDS:
-                hsv_values[pos_ceil] = (hue, 1.0, brightness_ceil)
+        if 0 <= pos_floor < NUM_LEDS:
+            hsv_values[pos_floor] = (hue, 1.0, brightness_floor)
+        if 0 <= pos_ceil < NUM_LEDS:
+            hsv_values[pos_ceil] = (hue, 1.0, brightness_ceil)
 
-            # Update the LED strip
-            for i in range(NUM_LEDS):
-                led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+        # Push to strip
+        for i in range(NUM_LEDS):
+            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
-            # Short delay for a smoother animation
-            time.sleep(0.02)
+        time.sleep(0.02)
 
-        # Make sure the top LED is off before the next drop
-        hsv_values[NUM_LEDS - 1] = (0.0, 0.0, 0.0)
-        led_strip.set_hsv(NUM_LEDS - 1, 0.0, 0.0, 0.0)
-
-        # Brief pause before the next ball
-        time.sleep(0.1)
+    # Make sure the top LED is off before returning
+    hsv_values[NUM_LEDS - 1] = (0.0, 0.0, 0.0)
+    led_strip.set_hsv(NUM_LEDS - 1, 0.0, 0.0, 0.0)
 
     return hsv_values
 
@@ -1634,19 +1931,45 @@ def effect_42(hsv_values):
 
 
 def effect_43(hsv_values):
-    """Wave pulsing up and down the strip."""
-    for i in range(NUM_LEDS):
-        brightness = (1 + math.sin(i * 2 * math.pi / 100.0)) / 2
-        hue = (i * 10) % 360 / 360.0
-        hsv_values[i] = (hue, 1.0, brightness)
+    """Wave pulsing up and down the strip with smooth motion over time."""
+    WAVE_LENGTH = 100.0   # larger = more stretched wave
+    SPEED = 0.003         # affects how fast phase moves
+    start_time = time.ticks_ms()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        t = time.ticks_diff(time.ticks_ms(), start_time)
+        for i in range(NUM_LEDS):
+            phase = (i * 2 * math.pi / WAVE_LENGTH) + (t * SPEED)
+            brightness = (1.0 + math.sin(phase)) * 0.5
+
+            hue = ((i * 10) % 360) / 360.0
+            hsv_values[i] = (hue, 1.0, brightness)
+            led_strip.set_hsv(i, hue, 1.0, brightness)
+
+        time.sleep(0.02)
+
     return hsv_values
 
+
 def effect_44(hsv_values):
-    """Waterfall effect with random colors."""
-    for i in range(NUM_LEDS):
-        hue = (i * 30) % 360 / 360.0
-        brightness = (1 + math.sin(i * 2 * math.pi / 10.0)) / 2
-        hsv_values[i] = (hue, 1.0, brightness)
+    """Waterfall effect: flowing bands with a soft sine wave, moving 'down' the strip."""
+    WAVE_LENGTH = 10.0
+    SPEED = 0.006   # movement speed
+    start_time = time.ticks_ms()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        t = time.ticks_diff(time.ticks_ms(), start_time)
+        for i in range(NUM_LEDS):
+            # Make the wave appear to flow along i + time
+            phase = (i * 2 * math.pi / WAVE_LENGTH) + (t * SPEED)
+            brightness = (1.0 + math.sin(phase)) * 0.5
+
+            hue = ((i * 30) % 360) / 360.0
+            hsv_values[i] = (hue, 1.0, brightness)
+            led_strip.set_hsv(i, hue, 1.0, brightness)
+
+        time.sleep(0.02)
+
     return hsv_values
 
 def effect_45(hsv_values):
@@ -1719,11 +2042,37 @@ def effect_46(hsv_values):
 
 
 def effect_47(hsv_values):
-    """Random wave effect with multiple hues."""
-    for i in range(NUM_LEDS):
-        hue = randrange(360) / 360.0
-        brightness = (1 + math.sin(i * 2 * math.pi / 10.0)) / 2
-        hsv_values[i] = (hue, 1.0, brightness)
+    """Randomised, rolling color waves with multiple hues."""
+    WAVE_LENGTH = 12.0
+    SPEED = 0.004
+    HUE_SCROLL_SPEED = 0.0008
+
+    start_time = time.ticks_ms()
+    base_hue = random()
+
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        t_ms = time.ticks_diff(time.ticks_ms(), start_time)
+        t = t_ms * SPEED
+
+        # Slowly scroll base hue over time
+        base_hue = (base_hue + HUE_SCROLL_SPEED) % 1.0
+
+        for i in range(NUM_LEDS):
+            # Multi-wave interference for brightness
+            phase1 = i * 2 * math.pi / WAVE_LENGTH + t
+            phase2 = i * 2 * math.pi / (WAVE_LENGTH * 1.7) - t * 0.7
+            brightness = (math.sin(phase1) + math.sin(phase2)) * 0.25 + 0.5
+            brightness = max(0.0, min(1.0, brightness))
+
+            # Random-ish hue spread along the strip
+            hue_offset = (i * 0.03) % 1.0
+            hue = (base_hue + hue_offset) % 1.0
+
+            hsv_values[i] = (hue, 1.0, brightness)
+            led_strip.set_hsv(i, hue, 1.0, brightness)
+
+        time.sleep(0.02)
+
     return hsv_values
 
 def effect_48(hsv_values):
@@ -1925,7 +2274,7 @@ def effect_54(hsv_values):
             position = t % NUM_LEDS if t < NUM_LEDS else NUM_LEDS - (t % NUM_LEDS) - 1
             for i in range(NUM_LEDS):
                 brightness = max(0, 1 - abs(i - position) / 10)
-                hsv_values[i] = (0.0, 1.0, brightness)
+                hsv_values[i] = (0.33, 1.0, brightness)
                 led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
             time.sleep(0.05)
     return hsv_values
@@ -2596,7 +2945,7 @@ def effect_77(hsv_values):
 # tester
 '''
 effects = [
-    effect_26
+    effect_47
     ]
 '''
 # List of effects
@@ -2620,32 +2969,37 @@ effects = [
 ]
 
 
-# Initialize effect manager
 manager = EffectManager(NUM_LEDS)
+# ============================================================
+# MAIN CONTROL FLOW
+# ============================================================
+def get_random_timeout_duration():
+    return randrange(MIN_EFFECT_DURATION, MAX_EFFECT_DURATION)
 
-# Main loop to cycle through effects
-while True:    
-    manager.select_next_effect()
-    manager.run_effect(effects[manager.current_effect])
-    gc.collect()
-    
-    
 
-## use the adafruit apds9960 light sensor to detect the darkness
-
-# Initialize the light sensor with a darkness threshold
-'''
-light_sensor = LightSensor(threshold=10)
-
-while True:
-    if light_sensor.is_dark():
-        print("It's dark enough, running the lighting effects...")
-        
-        # Insert your lighting effects code here
+def run_full_effect_show():
+    """Endless loop cycling through your 77 effects, printing FX + runtime."""
+    while True:
         manager.select_next_effect()
-        manager.run_effect(effects[manager.current_effect])
-    else:
-        print("It's too bright, skipping the lighting effects.")
+        fx_index = manager.current_effect          # 0-based
+        fx_number = fx_index + 1                   # 1–77
+        fx_fn = effects[fx_index]
 
-    sleep(0.25)
-'''
+        start_ms = time.ticks_ms()
+        print("Starting FX", fx_number, "-", fx_fn.__name__)
+
+        manager.run_current_effect()
+
+        end_ms = time.ticks_ms()
+        elapsed_ms = time.ticks_diff(end_ms, start_ms)
+        elapsed_s = elapsed_ms / 1000.0
+        print("FX", fx_number, "runtime:", elapsed_ms, "ms (", elapsed_s, "s )")
+
+        gc.collect()
+
+
+
+if __name__ == "__main__":
+    run_starfield_until_button()
+    run_full_effect_show()
+
