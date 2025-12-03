@@ -954,20 +954,26 @@ def effect_15(hsv_values):
 
 
 def effect_16(hsv_values):
-    """Simulates a lava drip effect on a GRB LED strip, starting from the top and dripping downward."""
+    """Simulates a lava drip effect on a GRB/BGR strip, starting from the top and dripping downward."""
 
     drip_length = 5
     speed_delay = 0.02
     acceleration = 1.05
     max_brightness = 0.9
     min_brightness = 0.2
-    hue = 0.05  # Lava-like red-orange hue
-    saturation = 1.0
+
+    # This is the "real" lava hue you want (red-orange)
+    BASE_HUE = 0.00      # 0.0 = red, ~0.05 = orange-red
+    SATURATION = 1.0
+
+    # Extra hue offset to cancel your strip’s green bias.
+    # This is the same trick as we used on effect_32.
+    HUE_OFFSET = 0.33    # ~120° shift
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        position = 0  # Start from the top
+        position = 0      # Start from the top
         speed = speed_delay
 
         while position < NUM_LEDS:
@@ -980,14 +986,19 @@ def effect_16(hsv_values):
                 pos = position + i
                 if 0 <= pos < NUM_LEDS:
                     brightness = max_brightness - ((i / drip_length) * (max_brightness - min_brightness))
-                    r, g, b = hsv_to_rgb(hue, saturation, brightness)
+
+                    # 🔥 Fix: rotate hue so it appears lava-red/orange on your strip
+                    display_hue = (BASE_HUE + HUE_OFFSET) % 1.0
+                    r, g, b = hsv_to_rgb(display_hue, SATURATION, brightness)
+
                     led_strip.set_rgb(pos, int(r * 255), int(g * 255), int(b * 255))
 
-            position += 1  # Move the drip downward
-            speed *= acceleration  # Increase the speed
+            position += 1       # Move the drip downward
+            speed *= acceleration
             time.sleep(speed)
 
         time.sleep(0.5)
+
     return hsv_values
 
 def effect_17(hsv_values):
