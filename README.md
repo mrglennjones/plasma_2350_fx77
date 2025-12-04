@@ -9,4 +9,4 @@ firework, bouncing ball and lava etc had been swapped around.
 
 defaults to starfield at startup, pressing A will begin FX77 mode. 
 
-reset reterns back to starfield
+reset retuns back to starfield
