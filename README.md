@@ -6,6 +6,6 @@ same as my version for the 2040 (https://github.com/mrglennjones/plasma_2040_fx7
 firework, bouncing ball and lava etc had been swapped around.
 
 
-Boot without BUTTON A held down = FX77
-Boot with BUTTON A held down = Starfield
-Tapping BUTTON A in Starfield = FX77
+*Boot without BUTTON A held down = FX77
+*Boot with BUTTON A held down = Starfield
+*Tapping BUTTON A in Starfield = FX77
