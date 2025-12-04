@@ -1988,7 +1988,7 @@ def effect_41(hsv_values):
 def effect_42(hsv_values):
     """Spiral effect moving up the strip (from bottom to top) with a 66-LED spiral and random side-to-side hue shifts."""
     speed = 0.05  # Speed of the spiral movement
-    spiral_length = 66  # Length of the spiral (full strip)
+    spiral_length = NUM_LEDS  # Length of the spiral (full strip)
     hue_shift = 0.01  # Base hue change per step
     hue_range = 0.2  # Restrict hue to 10% of the spectrum
 
