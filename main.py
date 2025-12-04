@@ -2315,36 +2315,178 @@ def effect_54(hsv_values):
     return hsv_values
 
 def effect_55(hsv_values):
-    """Comet Trail (starts off-strip and ends off-strip)."""
+    """Cinematic comet with long tail, embers and ambient glow.
+       Each new comet has its own narrow hue band. No shockwave."""
+    
+    TAIL_LENGTH = 18
+    BASE_FADE = 0.82
+    BG_DECAY = 0.96
+    EMBER_CHANCE = 0.18
+    EMBER_DECAY_MIN = 0.002
+    EMBER_DECAY_MAX = 0.01
+    EMBER_POP_CHANCE = 0.01
+
+    HUE_SPREAD = 0.10      # width of hue band per comet (0–1 scale)
+    HUE_JITTER = 0.01      # small per-pixel variation
 
     start_time = time.ticks_ms()
 
-    comet_length = 10        # Same as your original (distance / 10)
-    speed_delay = 0.05       # Same timing as your version
+    # Ambient fog (warm/cool based on comet hue)
+    bg_glow = [0.0] * NUM_LEDS
 
-    # Start BEFORE LED 0 (negative head index)
-    start_head = -comet_length
-    # End AFTER the last LED (beyond strip range)
-    end_head = NUM_LEDS + comet_length
+    # Ember list
+    embers = []  # each: {"pos": float, "hue": float, "brightness": float, "decay": float}
 
-    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+    def time_left():
+        return time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION
 
-        # Move comet head from off-strip left → off-strip right
-        for head in range(start_head, end_head):
+    while time_left():
+        # Pick a new hue band for THIS comet
+        center = random()
+        hue_min = max(0.0, center - HUE_SPREAD / 2)
+        hue_max = min(1.0, center + HUE_SPREAD / 2)
 
+        def rand_hue():
+            return uniform(hue_min, hue_max)
+
+        # Direction: 1 = left→right, -1 = right→left
+        direction = 1 if randrange(2) == 0 else -1
+
+        if direction == 1:
+            head = -TAIL_LENGTH
+            def done(h): return h > NUM_LEDS + TAIL_LENGTH
+        else:
+            head = NUM_LEDS + TAIL_LENGTH
+            def done(h): return h < -TAIL_LENGTH
+
+        base_hue = rand_hue()
+
+        # Speed easing
+        speed_start = uniform(0.09, 0.16)
+        speed_end   = uniform(0.03, 0.06)
+        t_step = 0
+
+        # -----------------------------
+        #   COMET TRAVEL PHASE
+        # -----------------------------
+        while not done(head) and time_left():
+
+            # Fade old pixels + fog
             for i in range(NUM_LEDS):
-                distance = abs(head - i)
-                hue = 0.5
+                h, s, v = hsv_values[i]
+                v *= BASE_FADE
+                bg_glow[i] *= BG_DECAY
+                v = max(v, bg_glow[i])
+                hsv_values[i] = (h, s, v)
 
-                # Your original falloff formula
-                brightness = max(0, 1 - distance / comet_length)
+            # Update embers
+            max_emb = 0.0
+            for e in embers[:]:
+                e["brightness"] -= e["decay"]
+                if e["brightness"] <= 0:
+                    embers.remove(e)
+                    continue
 
-                hsv_values[i] = (hue, 1.0, brightness)
-                led_strip.set_hsv(i, hue, 1.0, brightness)
+                # Chance of ember "pop"
+                if e["brightness"] < 0.4 and random() < EMBER_POP_CHANCE:
+                    e["brightness"] = min(1.0, e["brightness"] + uniform(0.3, 0.7))
 
-            time.sleep(speed_delay)
+                pos = int(e["pos"])
+                if 0 <= pos < NUM_LEDS:
+                    _, _, old_v = hsv_values[pos]
+                    v = max(old_v, e["brightness"])
+                    hsv_values[pos] = (e["hue"], 1.0, v)
+                    if v > max_emb:
+                        max_emb = v
+
+            # Draw comet head + tail
+            for k in range(TAIL_LENGTH):
+                pos = int(round(head - direction * k))
+                if 0 <= pos < NUM_LEDS:
+
+                    frac = 1.0 - (k / TAIL_LENGTH)
+                    brightness = frac * frac
+
+                    hue = base_hue + uniform(-HUE_JITTER, HUE_JITTER)
+                    hue = max(hue_min, min(hue_max, hue))
+
+                    _, _, existing_v = hsv_values[pos]
+                    v = max(existing_v, brightness)
+                    hsv_values[pos] = (hue, 1.0, v)
+
+                    # Ambient glow accumulation
+                    bg_glow[pos] = max(bg_glow[pos], brightness * 0.25)
+
+                    # Spawn ember?
+                    if brightness > 0.25 and random() < EMBER_CHANCE:
+                        e_hue = base_hue + uniform(-HUE_JITTER, HUE_JITTER)
+                        e_hue = max(hue_min, min(hue_max, e_hue))
+                        embers.append({
+                            "pos": pos + uniform(-0.3, 0.3),
+                            "hue": e_hue,
+                            "brightness": brightness * uniform(0.4, 0.9),
+                            "decay": uniform(EMBER_DECAY_MIN, EMBER_DECAY_MAX),
+                        })
+
+            # Push frame to LEDs
+            for i in range(NUM_LEDS):
+                h, s, v = hsv_values[i]
+                led_strip.set_hsv(i, h, s, v)
+
+            # Easing speed
+            t_step += 1
+            lerp = min(1.0, t_step / float(NUM_LEDS + TAIL_LENGTH))
+            speed = speed_start + (speed_end - speed_start) * lerp
+
+            head += direction
+            time.sleep(speed)
+
+        # -----------------------------
+        #   DECAY PHASE (embers + fog)
+        # -----------------------------
+        while embers and time_left():
+
+            max_b = 0.0
+
+            # fade trails + fog
+            for i in range(NUM_LEDS):
+                h, s, v = hsv_values[i]
+                v *= BASE_FADE
+                bg_glow[i] *= BG_DECAY
+                v = max(v, bg_glow[i])
+                hsv_values[i] = (h, s, v)
+
+            # update embers
+            for e in embers[:]:
+                e["brightness"] -= e["decay"]
+                if e["brightness"] <= 0:
+                    embers.remove(e)
+                    continue
+
+                if e["brightness"] < 0.002 and random() < EMBER_POP_CHANCE:
+                    e["brightness"] = min(1.0, e["brightness"] + uniform(0.2, 0.5))
+
+                pos = int(e["pos"])
+                if 0 <= pos < NUM_LEDS:
+                    _, _, old_v = hsv_values[pos]
+                    v = max(old_v, e["brightness"])
+                    hsv_values[pos] = (e["hue"], 1.0, v)
+                    if v > max_b:
+                        max_b = v
+
+            # push frame
+            for i in range(NUM_LEDS):
+                h, s, v = hsv_values[i]
+                led_strip.set_hsv(i, h, s, v)
+
+            # break when scene is basically empty
+            if max_b < 0.05 and max(bg_glow) < 0.05:
+                break
+
+            time.sleep(0.05)
 
     return hsv_values
+
 
 
 def effect_56(hsv_values):
