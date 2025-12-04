@@ -29,26 +29,41 @@ led_strip.start()
 # BUTTON SETUP (Plasma 2350 W / others)
 # -----------------------------
 
-button_pins = []
+# -----------------------------
+# BUTTON SETUP (Plasma 2350 W)
+# -----------------------------
 
-# Try all sensible names – whichever exist will be used
-for name in ("USER_SW", "BUTTON_A", "SW_A"):
-    try:
-        # Most Pimoroni-style user buttons are ACTIVE-LOW with an internal pull-up
-        pin = Pin(name, Pin.IN, Pin.PULL_UP)
-        button_pins.append(pin)
-    except Exception:
-        pass
+
+
+try:
+    button_a = Pin("BUTTON_A", Pin.IN, Pin.PULL_UP)
+    print("DEBUG: BUTTON_A created, initial value:", button_a.value())
+except Exception as e:
+    print("DEBUG: BUTTON_A not available:", e)
+    button_a = None
 
 
 def button_pressed():
-    """Return True if any known button pin is pressed (active-low)."""
-    for p in button_pins:
-        # Active-low: 0 = pressed, 1 = not pressed
-        if p.value() == 0:
-            return True
-    return False
+    """Return True if BUTTON A is pressed (active-low)."""
+    if button_a is None:
+        return False
+    # Active-low: 0 = pressed, 1 = not pressed
+    return button_a.value() == 0
 
+def wait_for_button_release():
+    """Block until BUTTON A is released (goes high)."""
+    if button_a is None:
+        return
+    while button_a.value() == 0:  # still pressed
+        time.sleep_ms(10)
+
+
+def wait_for_button_press():
+    """Block until BUTTON A is pressed (goes low)."""
+    if button_a is None:
+        return
+    while button_a.value() == 1:  # not pressed
+        time.sleep_ms(10)
 
 # ============================================================
 # STARFIELD + COMET DEFAULT EFFECT
@@ -210,25 +225,90 @@ def run_comet():
 
 
 def run_starfield_until_button():
-    """Run the starfield + occasional comets until BUTTON A is pressed."""
+    """Run the starfield + occasional comets.
+
+    - BUTTON A held at boot selects this mode.
+    - Starfield starts animating immediately.
+    - Only after the button has been released once, a *new* press will exit.
+    """
     init_stars()
+
+    exit_armed = False  # becomes True once we've seen the button released
+
+    print("Starfield: running (will exit on BUTTON A *after* first release)")
 
     while True:
         update_stars()
 
+        # Track button state for exit logic
+        if not exit_armed:
+            # Arm exit once we've seen it released at least once
+            if not button_pressed():
+                exit_armed = True
+        else:
+            # Once armed, a press is treated as "exit now"
+            if button_pressed():
+                print("Starfield: BUTTON A pressed after release -> exiting to FX show")
+                # Optional: wait for release so the FX show doesn't see a 'stuck' press
+                while button_pressed():
+                    time.sleep_ms(10)
+                break
+
         # Occasionally launch a comet
         comet_chance = COMET_BASE_CHANCE * uniform(0.5, 1.5)
         if random() < comet_chance:
-            run_comet()
-            if button_pressed():
-                break
+            # Inside comet, honour the same exit logic
+            head_armed = exit_armed
+            trail_len = randrange(COMET_MIN_TRAIL, COMET_MAX_TRAIL + 1)
+            if trail_len > NUM_LEDS:
+                trail_len = NUM_LEDS
 
-        # Check button every frame
-        if button_pressed():
-            break
+            direction = 1 if randrange(2) == 0 else -1
+            comet_delay = uniform(COMET_MIN_SPEED, COMET_MAX_SPEED)
+            head_brightness = uniform(COMET_HEAD_BRIGHT_MIN, COMET_HEAD_BRIGHT_MAX)
+
+            if direction == 1:
+                head = -trail_len
+                end = NUM_LEDS + trail_len
+                step = 1
+            else:
+                head = NUM_LEDS + trail_len
+                end = -trail_len
+                step = -1
+
+            while head != end:
+                # Update exit arming while comet is running
+                if not head_armed and not button_pressed():
+                    head_armed = True
+                elif head_armed and button_pressed():
+                    print("Starfield: exit requested during comet")
+                    while button_pressed():
+                        time.sleep_ms(10)
+                    return  # leave starfield immediately
+
+                # Draw background
+                for i in range(NUM_LEDS):
+                    led_strip.set_hsv(i, star_hue[i], star_sat[i], star_current[i])
+
+                # Draw comet
+                for k in range(trail_len):
+                    pos = head - k * direction
+                    if 0 <= pos < NUM_LEDS:
+                        frac = (trail_len - k) / float(trail_len)
+                        comet_b = head_brightness * (frac * frac)
+                        tail_sat = COMET_SAT * frac
+                        tail_hue = COMET_HUE
+
+                        led_strip.set_hsv(pos, tail_hue, tail_sat, comet_b)
+
+                        glow_boost = comet_b * AFTERGLOW_MAX
+                        new_star_b = min(star_current[pos] + glow_boost, STAR_MAX_BRIGHT)
+                        star_current[pos] = new_star_b
+
+                time.sleep(comet_delay)
+                head += step
 
         time.sleep(TWINKLE_FRAME_DELAY)
-
 
 
 
@@ -1000,6 +1080,7 @@ def effect_16(hsv_values):
         time.sleep(0.5)
 
     return hsv_values
+
 
 def effect_17(hsv_values):
     """Quantum Pulse Waveforms: Rhythmic, particle-like waves that pulse with quantum uncertainty."""
@@ -2488,7 +2569,6 @@ def effect_55(hsv_values):
     return hsv_values
 
 
-
 def effect_56(hsv_values):
     """Colorful Fireworks Burst effect with expanding colorful bursts."""
     num_fireworks = 5  # Number of fireworks bursts
@@ -3138,13 +3218,12 @@ def effect_77(hsv_values):
 
 
 # tester
-'''
-effects = [
-    effect_47
-    ]
-'''
+
+#effects = [effect_55]
+
 # List of effects
-effects = [
+effects = [globals()[f"effect_{i}"] for i in range(1, 78)]
+'''effects = [
     effect_1, effect_2, effect_3, effect_4, effect_5,
     effect_6, effect_7, effect_8, effect_9, effect_10,
     effect_11, effect_12, effect_13, effect_14, effect_15,
@@ -3162,7 +3241,7 @@ effects = [
     effect_71, effect_72, effect_73, effect_74, effect_75,
     effect_76, effect_77
 ]
-
+'''
 
 manager = EffectManager(NUM_LEDS)
 # ============================================================
@@ -3170,6 +3249,8 @@ manager = EffectManager(NUM_LEDS)
 # ============================================================
 def get_random_timeout_duration():
     return randrange(MIN_EFFECT_DURATION, MAX_EFFECT_DURATION)
+
+
 
 
 def run_full_effect_show():
@@ -3192,9 +3273,42 @@ def run_full_effect_show():
 
         gc.collect()
 
+def choose_boot_mode():
+    """Check for BUTTON A during a short window after reset to choose startup mode."""
+    # Let hardware settle
+    time.sleep(0.05)
+
+    BOOT_WINDOW_MS = 1200
+    start = time.ticks_ms()
+
+    print("Boot: hold BUTTON A for STARFIELD; release for FX SHOW")
+
+    while time.ticks_diff(time.ticks_ms(), start) < BOOT_WINDOW_MS:
+        if button_pressed():
+            print("Boot: BUTTON A detected -> STARFIELD MODE")
+            return "starfield"
+        time.sleep(0.01)
+
+    print("Boot: no button -> FX SHOW")
+    return "fx"
 
 
 if __name__ == "__main__":
-    run_starfield_until_button()
+    # Small delay so the pin and USB etc have time to settle after reset
+    time.sleep(0.3)
+
+    if button_a is not None:
+        print("DEBUG: BUTTON_A at start of boot:", button_a.value())
+
+    mode = choose_boot_mode()
+
+    if mode == "starfield":
+        print("MODE: STARFIELD (BUTTON A at boot)")
+        run_starfield_until_button()
+        print("Starfield exited -> switching to FX SHOW")
+    else:
+        print("MODE: FX SHOW (default)")
+
     run_full_effect_show()
+
 
