@@ -2315,19 +2315,37 @@ def effect_54(hsv_values):
     return hsv_values
 
 def effect_55(hsv_values):
-    """Comet Trail"""
+    """Comet Trail (starts off-strip and ends off-strip)."""
+
     start_time = time.ticks_ms()
 
+    comet_length = 10        # Same as your original (distance / 10)
+    speed_delay = 0.05       # Same timing as your version
+
+    # Start BEFORE LED 0 (negative head index)
+    start_head = -comet_length
+    # End AFTER the last LED (beyond strip range)
+    end_head = NUM_LEDS + comet_length
+
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for t in range(NUM_LEDS):
+
+        # Move comet head from off-strip left → off-strip right
+        for head in range(start_head, end_head):
+
             for i in range(NUM_LEDS):
-                distance = abs(t - i)
+                distance = abs(head - i)
                 hue = 0.5
-                brightness = max(0, 1 - distance / 10)
+
+                # Your original falloff formula
+                brightness = max(0, 1 - distance / comet_length)
+
                 hsv_values[i] = (hue, 1.0, brightness)
-                led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
-            time.sleep(0.05)
+                led_strip.set_hsv(i, hue, 1.0, brightness)
+
+            time.sleep(speed_delay)
+
     return hsv_values
+
 
 def effect_56(hsv_values):
     """Colorful Fireworks Burst effect with expanding colorful bursts."""
