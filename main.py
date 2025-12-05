@@ -1986,39 +1986,49 @@ def effect_41(hsv_values):
 
 
 def effect_42(hsv_values):
-    """Spiral effect moving up the strip (from bottom to top) with a 66-LED spiral and random side-to-side hue shifts."""
-    speed = 0.05  # Speed of the spiral movement
-    spiral_length = NUM_LEDS  # Length of the spiral (full strip)
-    hue_shift = 0.01  # Base hue change per step
-    hue_range = 0.2  # Restrict hue to 10% of the spectrum
+    """Spiral effect moving up the strip with random side-to-side hue shifts."""
+    speed = 0.05          # Seconds between frames
+    spiral_length = NUM_LEDS   # Length of the spiral (full strip)
+    hue_shift = 0.01      # Base hue change per step
+    hue_range = 0.3       # Restrict hue to 20% of the spectrum
 
     start_time = time.ticks_ms()
-    direction = 1  # Initial direction for hue shift
+    end_time = time.ticks_add(start_time, TIMEOUT_DURATION)
+    direction = 1         # Initial direction for hue shift
 
-    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for t in range(NUM_LEDS * 2):
-            if randrange(100) < 10:  # 10% chance to change direction
-                direction = -direction
+    t = 0
+    while time.ticks_diff(end_time, time.ticks_ms()) > 0:
+        # Occasionally flip hue direction
+        if randrange(100) < 10:
+            direction = -direction
 
-            for i in range(NUM_LEDS):
-                # Calculate the position of the spiral's "head" with inversion
-                position = NUM_LEDS - (t + i) % spiral_length
+        for i in range(NUM_LEDS):
+            # Spiral head position wrapping along the strip
+            head_pos = (t + i) % spiral_length
 
-                # Calculate brightness based on distance from the head of the spiral
-                distance = abs(position - i)
-                brightness = max(0, 1 - distance / spiral_length)
+            # Distance from current LED to spiral head
+            distance = abs(head_pos - i)
 
-                # Apply hue shift with random side-to-side movement
-                hue = ((i * hue_shift + t * hue_shift * direction) % hue_range)
+            # Make the core reasonably bright and tail fall off
+            # Using spiral_length / 3.0 makes it tighter and more visible
+            brightness = max(0.0, 1.0 - distance / (spiral_length / 3.0))
 
-                # Set the color and brightness for each LED
-                hsv_values[i] = (hue, 1.0, brightness)
-                led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+            # Apply hue shift with side-to-side movement
+            hue = (i * hue_shift + t * hue_shift * direction) % hue_range
 
-            time.sleep(speed)
+            hsv_values[i] = (hue, 1.0, brightness)
+            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+
+        t += 1
+
+        # Small delay for animation speed
+        time.sleep(speed)
+
+        # Extra safety: break early if timeout hit mid-loop
+        if time.ticks_diff(end_time, time.ticks_ms()) <= 0:
+            break
 
     return hsv_values
-
 
 
 
