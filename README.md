@@ -1,5 +1,5 @@
 # plasma_2350_fx77
-77 led strip effects for pimoroni plasma 2350 (reversed)
+77 led strip effects for pimoroni plasma 2350 
 
 same as my version for the 2040 (https://github.com/mrglennjones/plasma_2040_fx77)  but with some added effects and reversed it so the pico end is at the top (for my stairs)
 
