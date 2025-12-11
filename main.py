@@ -766,22 +766,22 @@ def hsv_to_grb(h, s, v):
 
 
 def effect_10(hsv_values):
-    """Improved Lava Lamp Effect with Smooth, Solid Color Blobs and Blended Overlaps (GRB Compatible)."""
-    num_blobs = 3  # Number of blobs in the effect
-    base_speed = 0.05  # Base speed for the blobs
-    blob_min_size = 8  # Minimum size of the blobs
-    blob_max_size = 16  # Maximum size of the blobs
-    fade_factor = 0.95  # How quickly the previous color fades
-    step_time = 0.02  # Delay between animation steps
+    """Improved Lava Lamp Effect with Smooth, Solid Color Blobs and Blended Overlaps (Orientation-Aware)."""
+    num_blobs = 3
+    base_speed = 0.05
+    blob_min_size = 8
+    blob_max_size = 16
+    fade_factor = 0.95
+    step_time = 0.02
 
-    # Initialize blobs with position, size, direction, hue, and speed
+    # Blobs operate in ENVIRONMENT space (0 = logical bottom, NUM_LEDS-1 = logical top)
     blobs = [
         {
             "position": uniform(0, NUM_LEDS),
             "size": randrange(blob_min_size, blob_max_size),
             "direction": choice([-1, 1]),
             "hue": uniform(0, 1.0),
-            "speed": uniform(base_speed, base_speed * 2)
+            "speed": uniform(base_speed, base_speed * 2),
         }
         for _ in range(num_blobs)
     ]
@@ -789,52 +789,54 @@ def effect_10(hsv_values):
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        # Initialize arrays for blended hue, saturation, and brightness
+
+        # Arrays for blended values in ENVIRONMENT space
         blended_hue = [0.0] * NUM_LEDS
         blended_brightness = [0.0] * NUM_LEDS
-        total_weight = [0.0] * NUM_LEDS  # Track the sum of brightness weights for blending
+        total_weight = [0.0] * NUM_LEDS
 
-        # Fade all LEDs to create a trailing effect
-        for i in range(NUM_LEDS):
-            h, s, v = hsv_values[i]
-            v = v * fade_factor
-            hsv_values[i] = (h, s, v)
-            r, g, b = hsv_to_grb(h, s, v)
-            led_strip.set_rgb(i, r, g, b)
+        # Fade previous frame
+        for env_i in range(NUM_LEDS):
+            h, s, v = hsv_values[env_i]
+            v *= fade_factor
+            hsv_values[env_i] = (h, s, v)
+            set_hsv_env(env_i, h, s, v)
 
-        # Update each blob and calculate blending for overlaps
+        # Update blobs
         for blob in blobs:
-            # Update position and reverse direction at strip ends
+            # Movement in ENV space
             blob["position"] += blob["direction"] * blob["speed"]
+
+            # Bounce when hitting logical ends
             if blob["position"] < 0 or blob["position"] >= NUM_LEDS:
                 blob["direction"] *= -1
                 blob["position"] = max(0, min(NUM_LEDS - 1, blob["position"]))
 
-            # Apply the blob's color and brightness, blending with existing values
+            # Apply blob contribution
             for j in range(-blob["size"] // 2, blob["size"] // 2):
-                pos = int(blob["position"] + j)
-                if 0 <= pos < NUM_LEDS:
+                env_pos = int(blob["position"] + j)
+
+                if 0 <= env_pos < NUM_LEDS:
                     distance = abs(j) / (blob["size"] / 2)
-                    brightness = max(0, 1.0 - distance)  # Blob brightness decreases from center to edges
+                    brightness = max(0, 1.0 - distance)
 
-                    # Blend the hue and brightness for overlaps
-                    blended_hue[pos] += blob["hue"] * brightness
-                    blended_brightness[pos] += brightness
-                    total_weight[pos] += brightness
+                    blended_hue[env_pos] += blob["hue"] * brightness
+                    blended_brightness[env_pos] += brightness
+                    total_weight[env_pos] += brightness
 
-        # Set the final blended color for each LED
-        for i in range(NUM_LEDS):
-            if total_weight[i] > 0:
-                # Calculate the average hue and brightness based on the blending
-                final_hue = blended_hue[i] / total_weight[i]
-                final_brightness = blended_brightness[i] / total_weight[i]
-                hsv_values[i] = (final_hue, 1.0, final_brightness)
-                r, g, b = hsv_to_grb(final_hue, 1.0, final_brightness)
-                led_strip.set_rgb(i, r, g, b)
+        # Apply blended output
+        for env_i in range(NUM_LEDS):
+            if total_weight[env_i] > 0:
+                final_hue = blended_hue[env_i] / total_weight[env_i]
+                final_brightness = blended_brightness[env_i] / total_weight[env_i]
+
+                hsv_values[env_i] = (final_hue, 1.0, final_brightness)
+                set_hsv_env(env_i, final_hue, 1.0, final_brightness)
 
         time.sleep(step_time)
 
     return hsv_values
+
 
 
 
