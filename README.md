@@ -1,6 +1,8 @@
 # 🌈 Plasma 2350W — LED FX Engine (77 Effects)
 
-A feature-rich LED animation engine for the Pimoroni Plasma 2350W, driving a WS2812 / NeoPixel strip with 77 handcrafted effects, orientation-aware physics, comet particles, fireworks, waterfalls, meteors, neon beams, rain, and more.
+A feature-rich LED animation engine for the Pimoroni Plasma 2350W, Plasma Stick 2040, RP2040 board with WS2812/NeoPixel strip.
+
+77 handcrafted effects, orientation-aware physics, comet particles, fireworks, waterfalls, meteors, neon beams, rain, and more.
 
 Designed for Christmas trees, handrails, continuous ambient lighting, decorative installs.
 
