@@ -1,11 +1,66 @@
-# plasma_2350_fx77
-77 led strip effects for pimoroni plasma 2350 
+# 🌈 Plasma 2350W — LED FX Engine (77 Effects)
 
-same as my version for the 2040 (https://github.com/mrglennjones/plasma_2040_fx77)  but with some added effects and reversed it so the pico end is at the top (for my stairs)
+A feature-rich LED animation engine for the Pimoroni Plasma 2350W, driving a WS2812 / NeoPixel strip with 77 handcrafted effects, orientation-aware physics, comet particles, fireworks, waterfalls, meteors, neon beams, rain, and more.
 
-firework, bouncing ball and lava etc had been swapped around.
+Designed for continuous ambient lighting, decorative installs, and interactive visual art.
 
+# ✨ Features
 
-*Boot without BUTTON A held down = FX77
-*Boot with BUTTON A held down = Starfield
-*Tapping BUTTON A in Starfield = FX77
+77 unique LED effects (waves, rain, fire, explosions, neon, sparkles, spirals, digital rain…)
+
+Orientation-aware engine
+Effects automatically adapt when the 2350W is mounted at the top or bottom of the strip.
+
+Starfield boot mode
+Hold BUTTON A on reset to launch the cinematic starfield mode.
+
+Continuous FX show with smooth transitions
+
+Random timing & variation
+
+Compatible with latest Plasma firmware (v1.0.0)
+
+# 🎛️ Hardware Requirements
+
+Pimoroni Plasma 2350W
+
+WS2812 / NeoPixel LED strip
+
+USB-C power supply
+
+Thonny or any MicroPython REPL for uploading code
+
+# 🧭 Orientation System
+
+Set in your script:
+
+```
+ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
+#ORIENTATION = "TOP"    # controller at top, LEDs go down
+```
+```
+NUM_LEDS = <NumberOfLEDS>
+```
+
+# 🧨 Starfield Boot Mode
+
+Hold BUTTON A while pressing RESET:
+
+Held: boot into the starfield + comets mode
+
+Not held: proceed to the 77-effect automatic show
+
+Starfield runs until the button is pressed again.
+
+# 🚀 Getting Started
+
+Flash the Plasma 2350W MicroPython firmware v1.0.0
+
+Copy main.py to your board
+
+Reboot
+
+Hold BUTTON A on boot for starfield mode
+
+Otherwise enjoy the full FX show
+
