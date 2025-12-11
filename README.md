@@ -42,7 +42,7 @@ ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
 NUM_LEDS = <NumberOfLEDS>
 ```
 
-# 🧨 Starfield Boot Mode
+# 💫 Starfield Boot Mode
 
 Hold BUTTON A while pressing RESET:
 
