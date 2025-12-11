@@ -24,6 +24,8 @@ Random timing & variation
 
 Pimoroni Plasma Stick / 2350W / 2040 - Compatible with latest Plasma firmware (v1.0.0)
 
+[Grab one here](https://shop.pimoroni.com/products/plasma-2350-w?variant=54829890601339)
+
 WS2812 / NeoPixel LED strip
 
 USB-C power supply
