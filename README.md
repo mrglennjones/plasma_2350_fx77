@@ -30,7 +30,7 @@ USB-C power supply
 
 Thonny or any MicroPython REPL for uploading code
 
-# 🧭 Orientation System
+# 🧭 LED Amount & Orientation System
 
 Set in your script:
 
