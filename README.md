@@ -30,7 +30,7 @@ USB-C power supply
 
 Thonny or any MicroPython REPL for uploading code
 
-# 🧭 Orientation System
+# 🧭 LED Amount & Orientation System
 
 Set in your script:
 
@@ -64,3 +64,4 @@ Hold BUTTON A on boot for starfield mode
 
 Otherwise enjoy the full FX show
 
+Effects can be previewed [here](effects_preview.md) - please note that the actual speed of the effect may differ.
