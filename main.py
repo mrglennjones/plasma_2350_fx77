@@ -2053,35 +2053,154 @@ def effect_38(hsv_values):
 
 
 def effect_39(hsv_values):
-    """Binary counter effect with 3-pixel wide groups, toggling LEDs on and off."""
-    counter = 0  # Initialize the binary counter
-    group_size = 3  # Each bit controls 3 consecutive LEDs
+    """Multi-neon laser sweeps with independent speeds and ghost trails (orientation-aware)."""
+    # Beam / laser parameters
+    NUM_BEAMS = 3
+    MIN_LENGTH = 8
+    MAX_LENGTH = 16
 
-    start_time = time.ticks_ms()  # Record the start time
+    MIN_STEP = 0.35      # min movement per frame (slower beams)
+    MAX_STEP = 0.95      # max movement per frame (faster beams)
+
+    HEAD_BRIGHT = 1.0
+    BG_DECAY = 0.90      # background fade
+    GHOST_DECAY = 0.94   # ghost fade
+    GHOST_SCALE = 0.5    # ghost brightness relative to source
+    GHOST_SPAWN_CHANCE = 0.10
+    MIN_VISIBLE = 0.01
+
+    # Neon-like palette (HSV hues)
+    NEON_HUES = [
+        0.83,  # magenta / pink
+        0.58,  # cyan
+        0.72,  # purple
+        0.38,  # lime / yellow-green
+        0.02,  # hot red/orange
+    ]
+
+    start_time = time.ticks_ms()
+
+    # Beam state: list of dicts
+    # env space: 0 = bottom, NUM_LEDS-1 = top
+    beams = []
+
+    def new_beam(direction=None):
+        """Create a new beam that starts off-strip and moves across."""
+        if direction is None:
+            direction = choice([-1, 1])
+
+        length = randrange(MIN_LENGTH, MAX_LENGTH + 1)
+        half_len = length / 2.0
+
+        # Start just off one side so it sweeps fully into view
+        if direction == 1:
+            center = -half_len
+        else:
+            center = NUM_LEDS + half_len
+
+        return {
+            "center": center,                 # float env index
+            "length": length,
+            "half_len": half_len,
+            "step": uniform(MIN_STEP, MAX_STEP),     # speed
+            "direction": direction,
+            "hue": choice(NEON_HUES),
+        }
+
+    # initialise beams
+    for _ in range(NUM_BEAMS):
+        beams.append(new_beam())
+
+    # Ghosts: each = {"pos": float, "hue": float, "brightness": float, "drift": float}
+    ghosts = []
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for i in range(NUM_LEDS // group_size):
-            # Calculate the state of the LED group based on the binary counter
-            if counter & (1 << i):
-                hue = 0.00  # Green in GRB format
-                brightness = 1.0  # LEDs on
-            else:
-                hue = 0.00  # Ensure hue is still defined
-                brightness = 0.0  # LEDs off
+        # -----------------------------------
+        # 1) Fade background
+        # -----------------------------------
+        for env_idx in range(NUM_LEDS):
+            h, s, v = hsv_values[env_idx]
+            v *= BG_DECAY
+            if v < MIN_VISIBLE:
+                v = 0.0
+            hsv_values[env_idx] = (h, s, v)
 
-            # Set the HSV values for each LED in the group
-            for j in range(group_size):
-                idx = i * group_size + j
-                if idx < NUM_LEDS:
-                    hsv_values[idx] = (hue, 1.0, brightness)
-                    led_strip.set_hsv(idx, hsv_values[idx][0], hsv_values[idx][1], hsv_values[idx][2])
+        # -----------------------------------
+        # 2) Update ghosts
+        # -----------------------------------
+        new_ghosts = []
+        for g in ghosts:
+            g["pos"] += g["drift"]
+            g["brightness"] *= GHOST_DECAY
 
-        counter += 1  # Increment the binary counter
-        time.sleep(0.01)  # Reduced delay for faster animation
+            if g["brightness"] <= MIN_VISIBLE:
+                continue
 
-        # If the counter exceeds the number of LED groups, reset it to keep the effect continuous
-        if counter >= (1 << (NUM_LEDS // group_size)):
-            counter = 0
+            idx = int(g["pos"])
+            if 0 <= idx < NUM_LEDS:
+                _, _, v_prev = hsv_values[idx]
+                v = max(v_prev, g["brightness"])
+                hsv_values[idx] = (g["hue"], 1.0, v)
+                new_ghosts.append(g)
+
+        ghosts = new_ghosts
+
+        # -----------------------------------
+        # 3) Draw all beams
+        # -----------------------------------
+        for beam in beams:
+            c = beam["center"]
+            half_len = beam["half_len"]
+            hue = beam["hue"]
+
+            # Go from -half_len to +half_len around center
+            for k in range(-int(half_len) - 1, int(half_len) + 2):
+                pos = c + k
+                env_idx = int(pos)
+                if 0 <= env_idx < NUM_LEDS:
+                    frac = 1.0 - (abs(k) / (half_len + 0.001))
+                    if frac <= 0.0:
+                        continue
+
+                    # Smooth profile; soften a bit so it’s not a harsh bar
+                    brightness = HEAD_BRIGHT * (frac ** 1.4)
+
+                    # Blend with existing
+                    _, _, v_prev = hsv_values[env_idx]
+                    v = max(v_prev, brightness)
+                    hsv_values[env_idx] = (hue, 1.0, v)
+
+                    # Spawn ghosts mostly from the outer third
+                    if abs(k) > half_len * 0.4 and random() < GHOST_SPAWN_CHANCE:
+                        ghosts.append({
+                            "pos": env_idx + (random() - 0.5) * 0.4,
+                            "hue": hue,
+                            "brightness": brightness * GHOST_SCALE,
+                            "drift": (random() - 0.5) * 0.12,
+                        })
+
+        # -----------------------------------
+        # 4) Push frame to strip with orientation mapping
+        # -----------------------------------
+        for env_idx in range(NUM_LEDS):
+            h, s, v = hsv_values[env_idx]
+            set_hsv_env(env_idx, h, s, v)
+
+        # -----------------------------------
+        # 5) Advance beams, respawn if they’ve left
+        # -----------------------------------
+        for i, beam in enumerate(beams):
+            beam["center"] += beam["direction"] * beam["step"]
+
+            c = beam["center"]
+            half_len = beam["half_len"]
+
+            if beam["direction"] == 1 and c - half_len > NUM_LEDS + 1:
+                beams[i] = new_beam(direction=-1 if randrange(3) == 0 else 1)
+            elif beam["direction"] == -1 and c + half_len < -1:
+                beams[i] = new_beam(direction=1 if randrange(3) == 0 else -1)
+
+        time.sleep(0.02)
 
     return hsv_values
 
