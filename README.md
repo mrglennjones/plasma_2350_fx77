@@ -20,11 +20,9 @@ Continuous FX show with smooth transitions
 
 Random timing & variation
 
-Compatible with latest Plasma firmware (v1.0.0)
-
 # 🎛️ Hardware Requirements
 
-Pimoroni Plasma 2350W
+Pimoroni Plasma Stick / 2350W / 2040 - Compatible with latest Plasma firmware (v1.0.0)
 
 WS2812 / NeoPixel LED strip
 
