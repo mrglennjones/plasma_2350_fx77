@@ -3497,10 +3497,10 @@ def effect_77(hsv_values):
 
 # tester
 
-effects = [effect_40]
+#effects = [effect_40]
 
 # List of effects
-#effects = [globals()[f"effect_{i}"] for i in range(1, 78)]
+effects = [globals()[f"effect_{i}"] for i in range(1, 78)]
 '''effects = [
     effect_1, effect_2, effect_3, effect_4, effect_5,
     effect_6, effect_7, effect_8, effect_9, effect_10,
