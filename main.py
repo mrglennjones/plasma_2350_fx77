@@ -21,13 +21,42 @@ led_strip = plasma.WS2812(
 )
 led_strip.start()
 
-# -----------------------------
-# BUTTON SETUP (Plasma 2350 W firmware v1.0.0 style)
-# -----------------------------
+
 
 # -----------------------------
-# BUTTON SETUP (Plasma 2350 W / others)
+# ORIENTATION CONTROL
 # -----------------------------
+# "BOTTOM" = 2350W is at the bottom, strip goes up
+# "TOP"    = 2350W is at the top, strip goes down
+#ORIENTATION = "TOP"  # or "TOP"
+ORIENTATION = "BOTTOM"  # or "TOP"
+
+def env_to_phys(env_idx: int) -> int:
+    """
+    Environment index:
+      0             = physical bottom
+      NUM_LEDS - 1  = physical top
+
+    ORIENTATION tells us where the 2350W sits on that vertical line:
+      - BOTTOM: 2350W at bottom -> env index matches physical index
+      - TOP:    2350W at top    -> env index is flipped
+    """
+    if ORIENTATION == "BOTTOM":
+        return env_idx
+    else:  # "TOP"
+        return NUM_LEDS - 1 - env_idx
+
+def set_hsv_env(env_idx: int, h: float, s: float, v: float):
+    """Set LED using environment coordinates (0 = bottom, NUM_LEDS-1 = top)."""
+    phys = env_to_phys(env_idx)
+    led_strip.set_hsv(phys, h, s, v)
+
+def set_rgb_env(env_idx: int, r: int, g: int, b: int):
+    """RGB version using environment coordinates."""
+    phys = env_to_phys(env_idx)
+    led_strip.set_rgb(phys, r, g, b)
+
+
 
 # -----------------------------
 # BUTTON SETUP (Plasma 2350 W)
@@ -633,11 +662,11 @@ def effect_8(hsv_values):
     return hsv_values
 
 def effect_9(hsv_values):
-    """Smooth Fading Fireworks effect (launching from the opposite end)."""
-    firework_speed = 0.3
+    """Smooth Fading Fireworks effect (orientation-aware, launch from bottom to top logically)."""
+    firework_speed = 0.05
     explosion_size = 10
     launch_interval = 50
-    fade_speed = 0.9
+    fade_speed = 0.90
     frame_count = 0
 
     active_explosions = []
@@ -645,24 +674,43 @@ def effect_9(hsv_values):
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # --- FADE EVERYTHING SLIGHTLY EACH FRAME ---
+        for i in range(NUM_LEDS):
+            h, s, v = hsv_values[i]
+            v *= fade_speed
+            hsv_values[i] = (h, s, v)
+            # environment → physical via set_hsv_env
+            set_hsv_env(i, h, s, v)
+
+        # --- OCCASIONALLY LAUNCH A NEW FIREWORK ---
         if frame_count % launch_interval == 0:
-            launch_pos = NUM_LEDS - 1  # Start from the last LED
-            explosion_pos = randrange(NUM_LEDS // 2)  # Explosion occurs in the first half
-            firework_hue = uniform(0, 1.0)
+            # LOGICAL bottom is env index 0
+            launch_pos = 0
+            # Explosion somewhere in the UPPER half of the strip (env space)
+            explosion_pos = randrange(NUM_LEDS // 2, NUM_LEDS)
+            firework_hue = uniform(0.0, 1.0)
+
             firework_phase = "launch"
 
-            # Launch phase
-            while firework_phase == "launch":
-                if launch_pos < NUM_LEDS - 1:
-                    hsv_values[launch_pos + 1] = (0.0, 0.0, 0.0)  # Clear the previous LED
-                    led_strip.set_hsv(launch_pos + 1, 0.0, 0.0, 0.0)
+            # LAUNCH PHASE: move from bottom (0) upwards to explosion_pos
+            while (firework_phase == "launch" and
+                   time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION):
 
-                hsv_values[launch_pos] = (firework_hue, 1.0, 1.0)  # Set current LED
-                led_strip.set_hsv(launch_pos, firework_hue, 1.0, 1.0)
+                # Clear previous launch pixel (only if we moved at least 1)
+                if launch_pos > 0:
+                    prev = launch_pos - 1
+                    hsv_values[prev] = (0.0, 0.0, 0.0)
+                    set_hsv_env(prev, 0.0, 0.0, 0.0)
 
-                launch_pos -= 1  # Move backward
+                # Draw current rocket position
+                hsv_values[launch_pos] = (firework_hue, 1.0, 1.0)
+                set_hsv_env(launch_pos, firework_hue, 1.0, 1.0)
 
-                if launch_pos <= explosion_pos:
+                # Move upwards (towards the logical top)
+                launch_pos += 1
+
+                # Reached the explosion altitude?
+                if launch_pos >= explosion_pos:
                     firework_phase = "explode"
                     active_explosions.append({
                         "position": explosion_pos,
@@ -670,26 +718,40 @@ def effect_9(hsv_values):
                         "size": 1,
                         "brightness": 1.0
                     })
-                time.sleep(0.05)
 
-        # Explosion phase
+                time.sleep(firework_speed)
+
+        # --- EXPLOSION PHASE(S) ---
         for explosion in active_explosions[:]:
-            for j in range(-explosion["size"], explosion["size"]):
-                pos = explosion["position"] + j
-                if 0 <= pos < NUM_LEDS:
-                    brightness = explosion["brightness"] * (1.0 - abs(j) / explosion["size"])
-                    hsv_values[pos] = (explosion["hue"], 1.0, brightness)
-                    led_strip.set_hsv(pos, hsv_values[pos][0], hsv_values[pos][1], hsv_values[pos][2])
+            pos = explosion["position"]      # env index
+            hue = explosion["hue"]
+            size = explosion["size"]
+            brightness = explosion["brightness"]
 
+            # Draw expanding ring around explosion position
+            for j in range(-size, size + 1):
+                idx = pos + j
+                if 0 <= idx < NUM_LEDS:
+                    dist = abs(j) / float(max(1, size))
+                    b = brightness * (1.0 - dist)
+                    if b > 0:
+                        hsv_values[idx] = (hue, 1.0, b)
+                        set_hsv_env(idx, hue, 1.0, b)
+
+            # Grow and fade the explosion
             explosion["size"] += 1
             explosion["brightness"] *= fade_speed
 
+            # Remove once it has faded
             if explosion["brightness"] < 0.01:
                 active_explosions.remove(explosion)
 
         frame_count += 1
-        time.sleep(0.05)
+        time.sleep(0.02)
+
     return hsv_values
+
+
 
 
 #def hsv_to_grb(h, s, v):
@@ -820,63 +882,115 @@ def effect_11(hsv_values):
     return hsv_values
 
 def effect_12(hsv_values):
-    """Tetris Block Fall (Bottom-Up) with Standard Tetris Colors in GRB format and Dispersal."""
+    """
+    Tetris Block Fall with orientation-aware ground at env index 0.
+
+    - ORIENTATION = "BOTTOM": 2350W at physical bottom, Tetris blocks fall
+      DOWN the strip towards the 2350W (env index 0).
+    - ORIENTATION = "TOP": same env-space animation, mirrored by env_to_phys().
+    """
     block_colors = [
-        {"name": "Cyan",    "rgb": (255, 0, 255)}, 
-        {"name": "Yellow",  "rgb": (255, 255, 0)}, 
-        {"name": "Purple",  "rgb": (0, 255, 255)}, 
-        {"name": "Green",   "rgb": (255, 0, 0)},   
-        {"name": "Blue",    "rgb": (0, 0, 255)},   
-        {"name": "Red",     "rgb": (0, 255, 0)},   
-        {"name": "Orange",  "rgb": (165, 255, 0)}  
+        {"name": "Cyan",    "rgb": (255, 0, 255)},
+        {"name": "Yellow",  "rgb": (255, 255, 0)},
+        {"name": "Purple",  "rgb": (0, 255, 255)},
+        {"name": "Green",   "rgb": (255, 0, 0)},
+        {"name": "Blue",    "rgb": (0, 0, 255)},
+        {"name": "Red",     "rgb": (0, 255, 0)},
+        {"name": "Orange",  "rgb": (165, 255, 0)},
     ]
-    
+
     max_block_length = 10
     min_block_length = 3
     frame_delay = 0.05
-    stacked_height = NUM_LEDS - 1  # Correctly initialize to the last LED index
-    blocks = []
 
-    # Clear the LED strip
+    # Ground is env index 0
+    stacked_height = -1              # highest occupied env index in the stack
+    blocks = []                      # list of landed blocks
+    stack_pixels = [(0, 0, 0)] * NUM_LEDS  # current stacked RGB in env space
+
+    # Clear LEDs
     for i in range(NUM_LEDS):
         hsv_values[i] = (0.0, 0.0, 0.0)
-        led_strip.set_rgb(i, 0, 0, 0)
+        set_rgb_env(i, 0, 0, 0)
 
-    # Start stacking blocks
-    while stacked_height >= 0:
-        block = block_colors[randrange(len(block_colors))]
+    start_time = time.ticks_ms()
+
+    # -----------------------------
+    # STACKING PHASE
+    # -----------------------------
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # If stack reaches the sky, stop stacking
+        if stacked_height >= NUM_LEDS - 1:
+            break
+
+        # Remaining vertical space above current stack
+        remaining = NUM_LEDS - (stacked_height + 1)
+        if remaining <= 0:
+            break
+
         block_length = randrange(min_block_length, max_block_length + 1)
+        if block_length > remaining:
+            block_length = remaining
+        if block_length <= 0:
+            break
 
-        print(f"Block Color: {block['name']}, Length: {block_length}")
+        block = block_colors[randrange(len(block_colors))]
+        print("Tetris block:", block["name"], "length:", block_length)
 
-        block_position = 0  # Start at the bottom
+        # Start block at the "sky" end (env NUM_LEDS-1)
+        top_env = NUM_LEDS - 1
+        bottom_env = top_env - (block_length - 1)
 
-        while block_position + block_length - 1 <= stacked_height:
-            # Clear the previous position of the block
-            if block_position > 0:
-                for j in range(block_position - 1, block_position - 1 + block_length):
-                    if 0 <= j < NUM_LEDS:
-                        led_strip.set_rgb(j, 0, 0, 0)
+        # If initial position already collides, stop
+        if bottom_env <= stacked_height:
+            break
 
-            # Draw the block at the new position
-            for j in range(block_position, block_position + block_length):
-                if 0 <= j < NUM_LEDS:
-                    led_strip.set_rgb(j, *block["rgb"])
+        # Fall loop: move block down towards env 0
+        while (bottom_env > stacked_height + 1 and
+               time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION):
 
-            block_position += 1  # Move the block upward
+            # FULL FRAME RENDER (no flashing):
+            # For each env pixel, show either stacked block color or falling block.
+            for i in range(NUM_LEDS):
+                r, g, b = stack_pixels[i]
+                if bottom_env <= i <= top_env:
+                    r, g, b = block["rgb"]
+                set_rgb_env(i, r, g, b)
+
             time.sleep(frame_delay)
 
-        # Store the block's final resting position
+            # Move one step closer to ground
+            top_env -= 1
+            bottom_env -= 1
+
+        # Landed position
+        landed_start = max(0, bottom_env)
+        landed_end = max(landed_start, top_env)
+
+        # Store landed block and update stack_pixels
         blocks.append({
-            "start": block_position - 1, 
-            "end": block_position + block_length - 1, 
-            "color": block["rgb"]
+            "start": landed_start,
+            "end": landed_end,
+            "color": block["rgb"],
         })
-        stacked_height -= block_length  # Update the stacked height
+
+        for j in range(landed_start, landed_end + 1):
+            if 0 <= j < NUM_LEDS:
+                stack_pixels[j] = block["rgb"]
+                set_rgb_env(j, *block["rgb"])
+
+        if landed_end > stacked_height:
+            stacked_height = landed_end
+
+        if stacked_height >= NUM_LEDS - 1:
+            break
 
     print("Blocks stacked. Pausing for 3 seconds...")
     time.sleep(3)
 
+    # -----------------------------
+    # DISPERSAL PHASE
+    # -----------------------------
     print("Dispersing blocks...")
     hsv_values = disperse_blocks(blocks, frame_delay, hsv_values)
 
@@ -884,27 +998,30 @@ def effect_12(hsv_values):
 
 
 def disperse_blocks(blocks, frame_delay, hsv_values):
-    """Disperse blocks randomly downward after stacking."""
+    """
+    Disperse blocks by sliding them towards env index 0 (ground), then off-strip.
+    Orientation is handled by set_rgb_env -> env_to_phys().
+    """
     while blocks:
-        for block in blocks:
-            # Check if the block can still move downward
-            if block["end"] < NUM_LEDS - 1:  # Ensure within bounds
-                # Clear the block's current position
-                for j in range(block["start"], block["end"] + 1):  # Inclusive of `end`
-                    if 0 <= j < NUM_LEDS:
-                        led_strip.set_rgb(j, 0, 0, 0)
+        # Move each block one step towards env 0
+        for block in blocks[:]:
+            block["start"] -= 1
+            block["end"] -= 1
 
-                # Move the block downward
-                block["start"] += 1
-                block["end"] += 1
-
-                # Draw the block at the new position
-                for j in range(block["start"], block["end"] + 1):  # Inclusive of `end`
-                    if 0 <= j < NUM_LEDS:
-                        led_strip.set_rgb(j, *block["color"])
-            else:
-                # Remove the block once it's completely off the strip
+            # If completely off below env 0, remove it
+            if block["end"] < 0:
                 blocks.remove(block)
+
+        # FULL FRAME RENDER: rebuild stack_pixels from current blocks
+        stack_pixels = [(0, 0, 0)] * NUM_LEDS
+        for block in blocks:
+            for j in range(block["start"], block["end"] + 1):
+                if 0 <= j < NUM_LEDS:
+                    stack_pixels[j] = block["color"]
+
+        for i in range(NUM_LEDS):
+            r, g, b = stack_pixels[i]
+            set_rgb_env(i, r, g, b)
 
         time.sleep(frame_delay)
 
@@ -913,49 +1030,82 @@ def disperse_blocks(blocks, frame_delay, hsv_values):
 
 
 def effect_13(hsv_values):
-    """Simulates torrential rain with fast-moving blue raindrops on the LED strip."""
+    """Torrential rain with fast-moving blue raindrops, orientation-aware.
+
+    Env space:
+      - env index 0         = ground
+      - env index NUM_LEDS-1 = sky
+
+    Rain always falls from sky (top) down towards ground (bottom) in env space.
+    ORIENTATION mapping (via set_rgb_env) flips the physical direction as needed.
+    """
 
     num_drops = 15
-    drop_color = (0, 0, 255)
+    drop_color = (0, 0, 255)     # Blue in RGB
     trail_length = 3
     frame_delay = 0.01
     drops = []
 
+    # led_state is stored in ENV coordinates
     led_state = [(0, 0, 0) for _ in range(NUM_LEDS)]
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Spawn new drops near the "sky" (upper half → top)
         if len(drops) < num_drops and uniform(0, 1) < 0.5:
-            start_pos = randrange(0, NUM_LEDS - 1)
-            drops.append({"position": start_pos, "speed": uniform(0.05, 0.15)})
+            start_pos = randrange(NUM_LEDS // 2, NUM_LEDS)  # upper half of env strip
+            drops.append({
+                "position": float(start_pos),
+                "speed": uniform(0.05, 0.15),
+            })
 
+        # Fade all LEDs slightly to create trails
         for i in range(NUM_LEDS):
-            led_state[i] = tuple(int(c * 0.7) for c in led_state[i])
+            r, g, b = led_state[i]
+            led_state[i] = (
+                int(r * 0.7),
+                int(g * 0.7),
+                int(b * 0.7),
+            )
 
+        # Update each drop
         for drop in drops:
             drop_pos = drop["position"]
             speed = drop["speed"]
 
+            # Draw head + short trail above it (towards the sky / higher env index)
             for i in range(trail_length):
-                pos = int(drop_pos) - i
+                pos = int(drop_pos) + i  # tail above the head
                 if 0 <= pos < NUM_LEDS:
                     brightness = 1.0 - (i / trail_length)
+                    r = int(drop_color[0] * brightness)
+                    g = int(drop_color[1] * brightness)
+                    b = int(drop_color[2] * brightness)
+
+                    # Max blend with existing state
+                    cur_r, cur_g, cur_b = led_state[pos]
                     led_state[pos] = (
-                        max(led_state[pos][0], int(drop_color[0] * brightness)),
-                        max(led_state[pos][1], int(drop_color[1] * brightness)),
-                        max(led_state[pos][2], int(drop_color[2] * brightness))
+                        max(cur_r, r),
+                        max(cur_g, g),
+                        max(cur_b, b),
                     )
 
-            drop["position"] += speed
+            # Move the drop DOWN (towards env index 0)
+            drop["position"] -= speed
 
+        # Remove drops that are completely off the bottom
+        drops = [drop for drop in drops if drop["position"] > -trail_length]
+
+        # Push env-state to physical LEDs
         for i in range(NUM_LEDS):
-            led_strip.set_rgb(i, *led_state[i])
-
-        drops = [drop for drop in drops if drop["position"] < NUM_LEDS]
+            r, g, b = led_state[i]
+            set_rgb_env(i, r, g, b)
 
         time.sleep(frame_delay)
+
     return hsv_values
+
 
 def effect_14(hsv_values):
     """Creates a dynamic wave of colors flowing across the LED strip."""
@@ -979,56 +1129,67 @@ def effect_14(hsv_values):
     return hsv_values
 
 def effect_15(hsv_values):
-    """Simulates a natural flame effect: deep red at the base, transitioning to orange, then to yellow."""
-    cooling = 40  # Rate at which heat cools down
-    sparking = 120  # Frequency of new sparks at the base
-    speed_delay = 0.02  # Speed of the flame effect
-    heat = [0] * NUM_LEDS  # Initialize heat array
+    """Natural flame effect: deep red at the base, transitioning to orange, then to yellow.
+    
+    Orientation-aware via env_to_phys():
+      - Env index 0           = flame base / ground
+      - Env index NUM_LEDS-1  = top of the flame
+    
+    ORIENTATION = "BOTTOM":
+        2350W at bottom; base is physically near the 2350W.
+    ORIENTATION = "TOP":
+        2350W at top; base is physically near the 2350W, with strip going down.
+    """
+    cooling = 40      # Rate at which heat cools down
+    sparking = 120    # Frequency of new sparks at the base
+    speed_delay = 0.02
+    heat = [0] * NUM_LEDS  # Heat array in ENV coordinates (0 = base)
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        # Step 1: Cool down each LED a little
+        # Step 1: Cool down each "cell" a little
         for i in range(NUM_LEDS):
             cooldown = randrange(0, ((cooling * 10) // NUM_LEDS) + 2)
             heat[i] = max(0, heat[i] - cooldown)
 
-        # Step 2: Heat drifts upward and diffuses
+        # Step 2: Heat drifts upward and diffuses (towards higher env indices)
         for i in range(NUM_LEDS - 3, 0, -1):
             heat[i] = (heat[i - 1] + heat[i - 2] + heat[i - 3]) // 3
 
-        # Step 3: Randomly ignite new sparks near the base
+        # Step 3: Randomly ignite new sparks near the base (env index 0)
         if randrange(255) < sparking:
-            y = randrange(0, 7)  # Position of the new spark, near the base
+            y = randrange(0, 7)  # Positions near the base in env-space
             heat[y] = min(255, heat[y] + randrange(160, 255))
 
-        # Step 4: Map heat to colors (red -> orange -> yellow)
-        for i in range(NUM_LEDS):
-            brightness = (heat[i] / 255.0) ** 1.5  # Adjust the brightness curve
+        # Step 4: Map heat to colors and write them, orientation-aware
+        for env_i in range(NUM_LEDS):
+            brightness = (heat[env_i] / 255.0) ** 1.5  # Adjust the brightness curve
 
             if brightness > 0.8:
                 # Yellow: top of the flame
-                r = brightness * 255  # Full red
-                g = brightness * 255  # Full green
-                b = 0  # No blue
+                r = brightness * 255
+                g = brightness * 255
+                b = 0
             elif brightness > 0.4:
                 # Orange: middle of the flame
-                r = brightness * 255  # Full red
-                g = brightness * 0.5 * 255  # Medium green for orange
-                b = 0  # No blue
+                r = brightness * 255
+                g = brightness * 0.5 * 255
+                b = 0
             else:
                 # Red: base of the flame
-                r = brightness * 255  # Full red
-                g = 0  # No green
-                b = 0  # No blue
+                r = brightness * 255
+                g = 0
+                b = 0
 
-            # Set the color on the GRB LED strip
-            led_strip.set_rgb(NUM_LEDS - 1 - i, int(g), int(r), int(b))  # Note: GRB order
+            # GRB order preserved exactly as before
+            phys = env_to_phys(env_i)
+            led_strip.set_rgb(phys, int(g), int(r), int(b))
 
-        # Pause briefly to control the speed of the flame
         time.sleep(speed_delay)
 
     return hsv_values
+
 
 
 
@@ -1538,44 +1699,61 @@ def effect_28(hsv_values):
 
 
 def effect_29(hsv_values):
-    """Matrix effect with cascading green characters falling from bottom to top."""
-    trail_length = 10  # Length of the trailing effect
-    fade_factor = 0.75  # Fading factor for the trails
-    num_trails = 5  # Number of cascading trails
+    """Matrix effect with cascading green characters, orientation-aware.
 
-    # Initialize positions and speeds for the trails
+    Env space:
+      - 0             = bottom (ground)
+      - NUM_LEDS - 1  = top
+
+    Visually: bright heads fall from top to bottom with fading green trails.
+    ORIENTATION flips which physical side is treated as bottom/top.
+    """
+    trail_length = 10      # Length of the trailing effect
+    fade_factor = 0.75     # Fading factor for the trails
+    num_trails = 5         # Number of cascading trails
+
+    # Head positions in ENV coordinates
     positions = [randrange(NUM_LEDS) for _ in range(num_trails)]
-    speeds = [uniform(0.05, 0.2) for _ in range(num_trails)]
+    speeds = [uniform(0.05, 0.2) for _ in range(num_trails)]  # kept for timing as before
     brightness_levels = [0.0] * NUM_LEDS
 
-    start_time = time.ticks_ms()  # Record the start time
+    start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        # Fade all LEDs slightly
-        for i in range(NUM_LEDS):
-            hsv_values[i] = (hsv_values[i][0], hsv_values[i][1], hsv_values[i][2] * fade_factor)
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+        # --- Fade all LEDs slightly (in env space) ---
+        for env_i in range(NUM_LEDS):
+            h, s, v = hsv_values[env_i]
+            v *= fade_factor
+            hsv_values[env_i] = (h, s, v)
+            set_hsv_env(env_i, h, s, v)
 
-        # Move and update each trail
+        # --- Move and draw each trail ---
         for i in range(num_trails):
-            position = positions[i]
-            brightness_levels[position] = 1.0  # Set the head of the trail to full brightness
+            position = positions[i]  # head position in env indices
+            if 0 <= position < NUM_LEDS:
+                brightness_levels[position] = 1.0  # head is brightest
 
-            # Create the trail effect
-            for j in range(trail_length):
-                trail_pos = position + j  # Move the trail upwards
-                if trail_pos < NUM_LEDS:
-                    brightness = 1.0 - (j / trail_length)
-                    hsv_values[trail_pos] = (0.00, 1.0, brightness * fade_factor)  # Green color (0.00)
-                    led_strip.set_hsv(trail_pos, hsv_values[trail_pos][0], hsv_values[trail_pos][1], hsv_values[trail_pos][2])
+                # Create the trailing effect above the head in env space
+                for j in range(trail_length):
+                    trail_pos = position + j  # larger env index = higher up
+                    if trail_pos < NUM_LEDS:
+                        brightness = 1.0 - (j / trail_length)
+                        h = 0.00     # green hue on your strip
+                        s = 1.0
+                        v = brightness * fade_factor
+                        hsv_values[trail_pos] = (h, s, v)
+                        set_hsv_env(trail_pos, h, s, v)
 
-            positions[i] -= 1  # Move the trail position upwards
-            if positions[i] < 0:  # Reset position if it goes above the strip
+            # Move the head "downwards" toward env 0 (bottom)
+            positions[i] -= 1
+            if positions[i] < 0:      # when it goes past bottom, respawn at top
                 positions[i] = NUM_LEDS - 1
 
-        time.sleep(min(speeds))  # Control the speed of the trails
+        # Timing as before
+        time.sleep(min(speeds))
 
     return hsv_values
+
 
 
 def effect_30(hsv_values):
@@ -1716,31 +1894,63 @@ def effect_34(hsv_values):
     return hsv_values
 
 def effect_35(hsv_values):
-    """Meteor shower with fading tails that vanish completely, moving from top to bottom."""
-    meteor_length = 10  # Length of the meteor's tail
-    meteor_speed = 0.1  # Speed of the meteor movement
-    fade_rate = 0.85    # Adjusted fade rate for a smoother fade-out
+    """Meteor shower with fading tails that vanish completely, orientation-aware.
+
+    Env space:
+      0             = bottom (ground)
+      NUM_LEDS - 1  = top
+
+    Visually: meteors streak from top → bottom with a fading tail.
+    ORIENTATION decides which *physical* end is the top/bottom.
+    """
+    meteor_length = 10   # Length of the meteor's tail
+    meteor_speed  = 0.1  # Speed of the meteor movement
+    fade_rate     = 0.85 # Fade rate for the tail
 
     start_time = time.ticks_ms()
 
+    # Start the meteor head just above the logical TOP so it "enters" the strip
+    head_env = NUM_LEDS - 1 + meteor_length
+
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        # Fade out the existing LED strip values
-        for i in range(NUM_LEDS):
-            h, s, v = hsv_values[i]
-            hsv_values[i] = (h, s, v * fade_rate)
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+        # -------------------------
+        # 1) Fade existing pixels
+        # -------------------------
+        for env_i in range(NUM_LEDS):
+            h, s, v = hsv_values[env_i]
+            v *= fade_rate
+            hsv_values[env_i] = (h, s, v)
+            set_hsv_env(env_i, h, s, v)
 
-        # Move the meteor across the strip (from top to bottom)
-        for pos in reversed(range(NUM_LEDS)):
-            for i in range(meteor_length):
-                index = (pos + i) % NUM_LEDS  # Moving downwards (top to bottom)
-                brightness = max(0, 1 - ((i + 1) / meteor_length))  # Ensure the tail fades to zero
-                hsv_values[index] = (0.33, 1.0, brightness)  # Use 0.33 for a red hue (GRB format)
-                led_strip.set_hsv(index, hsv_values[index][0], hsv_values[index][1], hsv_values[index][2])
+        # -------------------------
+        # 2) Draw meteor head + tail
+        # -------------------------
+        for k in range(meteor_length):
+            # Tail runs *downward* from the head in env space
+            tail_env = head_env - k
 
-            time.sleep(meteor_speed)  # Control the speed of the meteor
+            if 0 <= tail_env < NUM_LEDS:
+                # Tail brightness fades towards zero
+                brightness = max(0.0, 1.0 - (k + 1) / meteor_length)
+
+                if brightness > 0.0:
+                    hue = 0.33  # Your original red-ish hue
+                    hsv_values[tail_env] = (hue, 1.0, brightness)
+                    set_hsv_env(tail_env, hue, 1.0, brightness)
+
+        # -------------------------
+        # 3) Advance meteor head
+        # -------------------------
+        head_env -= 1
+
+        # When head + tail are completely off the bottom, restart above the top
+        if head_env < -meteor_length:
+            head_env = NUM_LEDS - 1 + meteor_length
+
+        time.sleep(meteor_speed)
 
     return hsv_values
+
 
 
 def effect_36(hsv_values):
@@ -1875,160 +2085,193 @@ def effect_39(hsv_values):
 
     return hsv_values
 
+
 def effect_40(hsv_values):
-    """Single bouncing ball that goes to the top, fades out, then returns."""
-    gravity = 0.03
-    bounce_damping = 0.70   # LOWERED from 0.85 so the motion actually dies out
+    """Single bouncing ball whose behaviour depends on ORIENTATION.
+
+    ORIENTATION = "BOTTOM":
+        Controller at bottom (env 0).
+        - Ball starts at env NUM_LEDS-1 (top)
+        - Falls TOWARDS controller
+        - Bounces at env 0
+        - Fades out at env 0
+
+    ORIENTATION = "TOP":
+        Controller at top (env NUM_LEDS-1).
+        - Ball starts at env NUM_LEDS-1 (controller side)
+        - Falls AWAY from controller to env 0
+        - Bounces at env 0
+        - Fades out at env 0
+    """
+    gravity_mag = 0.03
+    bounce_damping = 0.70   # how much speed is kept after each bounce
     fade_speed = 0.01
     pause_duration = 1.0
 
-    ball_position = 0.0  # Start at the bottom
+    # World coordinates: env 0 = bottom, env NUM_LEDS-1 = top
+    # (env_to_phys + set_hsv_env take care of mapping to real strip)
+    if ORIENTATION == "BOTTOM":
+        # Controller at env 0 (bottom). Ball falls towards controller.
+        start_env = NUM_LEDS - 1   # start at top
+        floor_env = 0              # bounce at controller end
+    else:  # ORIENTATION == "TOP"
+        # Controller at env NUM_LEDS-1 (top).
+        # Ball goes the OTHER WAY: away from controller, towards bottom.
+        start_env = NUM_LEDS - 1   # start at controller side (top)
+        floor_env = 0              # bounce at far end (bottom, away from controller)
+
+    # Decide direction so motion goes from start_env towards floor_env
+    direction = 1 if floor_env > start_env else -1
+    gravity = direction * gravity_mag
+
+    ball_position = float(start_env)
     velocity = 0.0
     hue = randrange(360) / 360.0
     ball_bouncing = True
 
     while ball_bouncing:
-        # Clear the LED strip
+        # Clear all LEDs in env-space
         for i in range(NUM_LEDS):
             hsv_values[i] = (0.0, 0.0, 0.0)
+            set_hsv_env(i, 0.0, 0.0, 0.0)
 
-        # Update velocity and position
+        # Physics integration
         velocity += gravity
         ball_position += velocity
 
-        # Check if the ball reaches the top and bounces back
-        if ball_position >= NUM_LEDS - 1:
-            ball_position = NUM_LEDS - 1
+        # Bounce check depending on direction
+        if (direction == -1 and ball_position <= floor_env) or \
+           (direction ==  1 and ball_position >= floor_env):
+
+            ball_position = float(floor_env)
             velocity = -velocity * bounce_damping
 
-            # If the bounce is too small, stop the animation
+            # If we’ve lost almost all energy, stop bouncing and fade out
             if abs(velocity) < 0.01:
                 ball_bouncing = False
 
-                # Show the ball at the top and fade it out
-                hsv_values[NUM_LEDS - 1] = (hue, 1.0, 1.0)
-                led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, 1.0)
+                env_idx = int(round(floor_env))
+                # Show ball parked at floor
+                hsv_values[env_idx] = (hue, 1.0, 1.0)
+                set_hsv_env(env_idx, hue, 1.0, 1.0)
                 time.sleep(pause_duration)
 
-                # Fade out effect
-                for brightness in [i / 100 for i in range(100, -1, -1)]:
-                    hsv_values[NUM_LEDS - 1] = (hue, 1.0, brightness)
-                    led_strip.set_hsv(NUM_LEDS - 1, hue, 1.0, brightness)
+                # Fade out at the floor LED
+                for step in range(100, -1, -1):
+                    b = step / 100.0
+                    hsv_values[env_idx] = (hue, 1.0, b)
+                    set_hsv_env(env_idx, hue, 1.0, b)
                     time.sleep(fade_speed)
                 break
 
-        # Smooth interpolation between LEDs
+        # Draw ball between two nearest env LEDs (smooth movement)
         pos_floor = int(ball_position)
         pos_ceil = min(pos_floor + 1, NUM_LEDS - 1)
-        brightness_ceil = ball_position - pos_floor
-        brightness_floor = 1.0 - brightness_ceil
+        frac = ball_position - pos_floor
+
+        brightness_ceil = max(0.0, min(1.0, frac))
+        brightness_floor = max(0.0, min(1.0, 1.0 - frac))
 
         if 0 <= pos_floor < NUM_LEDS:
             hsv_values[pos_floor] = (hue, 1.0, brightness_floor)
+            set_hsv_env(pos_floor, hue, 1.0, brightness_floor)
+
         if 0 <= pos_ceil < NUM_LEDS:
             hsv_values[pos_ceil] = (hue, 1.0, brightness_ceil)
-
-        # Push to strip
-        for i in range(NUM_LEDS):
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+            set_hsv_env(pos_ceil, hue, 1.0, brightness_ceil)
 
         time.sleep(0.02)
 
-    # Make sure the top LED is off before returning
-    hsv_values[NUM_LEDS - 1] = (0.0, 0.0, 0.0)
-    led_strip.set_hsv(NUM_LEDS - 1, 0.0, 0.0, 0.0)
+    # Make sure floor LED is off before returning
+    env_idx = int(floor_env)
+    hsv_values[env_idx] = (0.0, 0.0, 0.0)
+    set_hsv_env(env_idx, 0.0, 0.0, 0.0)
 
     return hsv_values
+
 
 
 
 def effect_41(hsv_values):
-    """Rotating comet effect that appears from off the end of the LED strip and exits off the start."""
-    comet_length = 10  # Length of the comet's tail
-    speed = 0.02  # Speed of the comet
+    """Rotating comet effect that appears from off one end and exits off the other (orientation-aware).
 
-    # Color values for the comet's head (initially set to red in GRB format)
-    hue = 0.33
+    Env space:
+      0             = bottom
+      NUM_LEDS - 1  = top
+
+    ORIENTATION decides which *physical* end is bottom/top.
+    """
+
+    comet_length = 10   # Length of the comet's tail
+    speed = 0.02        # Speed of the comet
+
+    # Color for the comet head (red-ish in your GRB/HSV scheme)
+    hue = 0.80
     saturation = 1.0
     brightness = 1.0
 
-    total_length = NUM_LEDS + comet_length  # Total length including off-strip space
+    start_time = time.ticks_ms()
 
-    start_time = time.ticks_ms()  # Record the start time
+    # We will repeatedly sweep the comet across the whole env space
+    # head_env runs from -comet_length (fully off one side)
+    # up to NUM_LEDS + comet_length (fully off the opposite side)
+    while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        for head_env in range(-comet_length, NUM_LEDS + comet_length):
+            # Abort this sweep early if timeout is hit mid-animation
+            if time.ticks_diff(time.ticks_ms(), start_time) >= TIMEOUT_DURATION:
+                break
+
+            for env_i in range(NUM_LEDS):
+                distance = abs(env_i - head_env)
+                if distance < comet_length:
+                    # Tail fades smoothly to zero at the end
+                    tail_brightness = brightness * (1.0 - distance / comet_length)
+                else:
+                    tail_brightness = 0.0
+
+                hsv_values[env_i] = (hue, saturation, tail_brightness)
+                set_hsv_env(env_i, hue, saturation, tail_brightness)
+
+            time.sleep(speed)
+
+    return hsv_values
+
+
+
+def effect_42(hsv_values):
+    """Spiral effect moving up the strip (from bottom to top) with a 66-LED spiral and random side-to-side hue shifts."""
+    speed = 0.05  # Speed of the spiral movement
+    spiral_length = NUM_LEDS  # Length of the spiral (full strip)
+    hue_shift = 0.01  # Base hue change per step
+    hue_range = 0.2  # Restrict hue to 10% of the spectrum
+
+    start_time = time.ticks_ms()
+    direction = 1  # Initial direction for hue shift
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for t in range(total_length * 2):  # Loop over the total length, including off-strip
+        for t in range(NUM_LEDS * 2):
+            if randrange(100) < 10:  # 10% chance to change direction
+                direction = -direction
+
             for i in range(NUM_LEDS):
-                # Calculate the reversed position of the comet's head relative to the LED strip
-                position = total_length - (t - comet_length)
+                # Calculate the position of the spiral's "head" with inversion
+                position = NUM_LEDS - (t + i) % spiral_length
 
-                # Determine the distance of each LED from the comet's head
+                # Calculate brightness based on distance from the head of the spiral
                 distance = abs(position - i)
+                brightness = max(0, 1 - distance / spiral_length)
 
-                if 0 <= position < NUM_LEDS and distance < comet_length:
-                    # Adjust the brightness based on the distance from the comet's head
-                    tail_brightness = brightness * (1 - distance / comet_length)
-                else:
-                    tail_brightness = 0.0  # LEDs outside the comet's range are off
+                # Apply hue shift with random side-to-side movement
+                hue = ((i * hue_shift + t * hue_shift * direction) % hue_range)
 
-                hsv_values[i] = (hue, saturation, tail_brightness)
+                # Set the color and brightness for each LED
+                hsv_values[i] = (hue, 1.0, brightness)
                 led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
             time.sleep(speed)
 
-            # Ensure the tail fades out completely at the start of the strip
-            if t == total_length * 2 - 1:
-                for i in range(NUM_LEDS):
-                    hsv_values[i] = (hue, saturation, 0.0)
-                    led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
-
     return hsv_values
 
-
-def effect_42(hsv_values):
-    """Spiral effect moving up the strip with random side-to-side hue shifts."""
-    speed = 0.05          # Seconds between frames
-    spiral_length = NUM_LEDS   # Length of the spiral (full strip)
-    hue_shift = 0.01      # Base hue change per step
-    hue_range = 0.3       # Restrict hue to 20% of the spectrum
-
-    start_time = time.ticks_ms()
-    end_time = time.ticks_add(start_time, TIMEOUT_DURATION)
-    direction = 1         # Initial direction for hue shift
-
-    t = 0
-    while time.ticks_diff(end_time, time.ticks_ms()) > 0:
-        # Occasionally flip hue direction
-        if randrange(100) < 10:
-            direction = -direction
-
-        for i in range(NUM_LEDS):
-            # Spiral head position wrapping along the strip
-            head_pos = (t + i) % spiral_length
-
-            # Distance from current LED to spiral head
-            distance = abs(head_pos - i)
-
-            # Make the core reasonably bright and tail fall off
-            # Using spiral_length / 3.0 makes it tighter and more visible
-            brightness = max(0.0, 1.0 - distance / (spiral_length / 3.0))
-
-            # Apply hue shift with side-to-side movement
-            hue = (i * hue_shift + t * hue_shift * direction) % hue_range
-
-            hsv_values[i] = (hue, 1.0, brightness)
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
-
-        t += 1
-
-        # Small delay for animation speed
-        time.sleep(speed)
-
-        # Extra safety: break early if timeout hit mid-loop
-        if time.ticks_diff(end_time, time.ticks_ms()) <= 0:
-            break
-
-    return hsv_values
 
 
 
@@ -2054,25 +2297,27 @@ def effect_43(hsv_values):
 
 
 def effect_44(hsv_values):
-    """Waterfall effect: flowing bands with a soft sine wave, moving 'down' the strip."""
+    """Waterfall effect: flowing bands with a soft sine wave, moving 'down' the strip (orientation-aware)."""
     WAVE_LENGTH = 10.0
     SPEED = 0.006   # movement speed
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
         t = time.ticks_diff(time.ticks_ms(), start_time)
-        for i in range(NUM_LEDS):
-            # Make the wave appear to flow along i + time
-            phase = (i * 2 * math.pi / WAVE_LENGTH) + (t * SPEED)
+
+        for env_i in range(NUM_LEDS):
+            # Same math as original, just using env index instead of physical i
+            phase = (env_i * 2 * math.pi / WAVE_LENGTH) + (t * SPEED)
             brightness = (1.0 + math.sin(phase)) * 0.5
 
-            hue = ((i * 30) % 360) / 360.0
-            hsv_values[i] = (hue, 1.0, brightness)
-            led_strip.set_hsv(i, hue, 1.0, brightness)
+            hue = ((env_i * 30) % 360) / 360.0
+            hsv_values[env_i] = (hue, 1.0, brightness)
+            set_hsv_env(env_i, hue, 1.0, brightness)
 
         time.sleep(0.02)
 
     return hsv_values
+
 
 def effect_45(hsv_values):
     """Game of Life effect with white LEDs."""
@@ -2823,37 +3068,60 @@ def effect_68(hsv_values):
     return hsv_values
 
 def effect_69(hsv_values):
-    """Sparkling Waterfall effect with dynamic blue hues and white sparkles."""
-    waterfall_speed = 0.05  # Speed of the waterfall movement
-    sparkle_chance = 0.1    # Probability of a sparkle occurring
-    fade_factor = 0.9       # How quickly the sparkles fade
+    """Sparkling Waterfall (orientation-aware, calmer, softer sparkles)."""
+
+    waterfall_speed = 0.05
+    sparkle_chance = 0.02      # MUCH lower chance of sparkles
+    sparkle_fade = 0.92        # Slower fade for sparkles
+    base_fade = 0.88           # General background fade
+    max_water_brightness = 0.4 # Reduce overall brightness for a calmer look
+
+    # Track sparkle intensities separately
+    sparkles = [0.0] * NUM_LEDS
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        for i in range(NUM_LEDS):
-            # Generate a blue hue with slight variations to simulate water
-            hue = 0.6  # Blue
-            brightness = (1 + math.sin(i * 2 * math.pi / 10.0 + time.ticks_ms() * waterfall_speed / 1000)) / 2
-            
-            # Apply the blue hue to the waterfall
-            hsv_values[i] = (hue, 1.0, brightness * fade_factor)
+        now = time.ticks_ms()
 
-            # Occasionally add a white sparkle
-            if uniform(0, 1) < sparkle_chance:
-                hsv_values[i] = (0.0, 0.0, 1.0)  # White sparkle
+        for env_i in range(NUM_LEDS):
 
-            # Gradually fade the sparkles
-            else:
-                hsv_values[i] = (hsv_values[i][0], hsv_values[i][1], hsv_values[i][2] * fade_factor)
+            # --- BASE WATERFALL MOTION ---
+            hue = 0.60  # blue
+            wave = (
+                1
+                + math.sin(
+                    env_i * 2 * math.pi / 12.0
+                    + now * waterfall_speed / 1000.0
+                )
+            ) / 2
+            base_brightness = wave * max_water_brightness
 
-        # Update the LED strip with the new HSV values
-        for j in range(NUM_LEDS):
-            led_strip.set_hsv(j, hsv_values[j][0], hsv_values[j][1], hsv_values[j][2])
+            # Apply soft fade
+            base_brightness *= base_fade
 
-        time.sleep(0.02)  # Control the speed of the effect
+            # --- SPARKLES ---
+            # Chance to spawn a subtle sparkle
+            if sparkles[env_i] <= 0.01 and random() < sparkle_chance:
+                sparkles[env_i] = 0.6  # sparkle intensity
+
+            # Sparkles fade gradually
+            sparkles[env_i] *= sparkle_fade
+
+            # Sparkle overrides base brightness but gently
+            brightness = max(base_brightness, sparkles[env_i])
+
+            hsv_values[env_i] = (hue, 1.0, brightness)
+
+        # Push to LED strip
+        for env_i in range(NUM_LEDS):
+            h, s, v = hsv_values[env_i]
+            set_hsv_env(env_i, h, s, v)
+
+        time.sleep(0.02)
 
     return hsv_values
+
 
 
 def effect_70(hsv_values):
@@ -3229,10 +3497,10 @@ def effect_77(hsv_values):
 
 # tester
 
-#effects = [effect_55]
+effects = [effect_40]
 
 # List of effects
-effects = [globals()[f"effect_{i}"] for i in range(1, 78)]
+#effects = [globals()[f"effect_{i}"] for i in range(1, 78)]
 '''effects = [
     effect_1, effect_2, effect_3, effect_4, effect_5,
     effect_6, effect_7, effect_8, effect_9, effect_10,
