@@ -1195,9 +1195,13 @@ def effect_15(hsv_values):
 
 
 
-
 def effect_16(hsv_values):
-    """Simulates a lava drip effect on a GRB/BGR strip, starting from the top and dripping downward."""
+    """Simulates a lava drip effect on a GRB/BGR strip, always falling from ENV top to ENV bottom.
+    
+    With the env/orientation system:
+      - ORIENTATION = "BOTTOM": controller at ENV 0 → lava falls TOWARDS the 2350W.
+      - ORIENTATION = "TOP":    controller at ENV NUM_LEDS-1 → lava falls AWAY from the 2350W.
+    """
 
     drip_length = 5
     speed_delay = 0.02
@@ -1216,27 +1220,32 @@ def effect_16(hsv_values):
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        position = 0      # Start from the top
+        # In ENV space, always start at the logical TOP and fall towards logical BOTTOM
+        position = NUM_LEDS - 1   # ENV top
+        step = -1                 # move towards ENV index 0
+
         speed = speed_delay
 
-        while position < NUM_LEDS:
-            # Clear the LED strip
-            for i in range(NUM_LEDS):
-                led_strip.set_rgb(i, 0, 0, 0)
+        while 0 <= position < NUM_LEDS and time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+            # Clear the LED strip in ENV space
+            for env_i in range(NUM_LEDS):
+                set_rgb_env(env_i, 0, 0, 0)
 
-            # Create the drip effect
+            # Create the drip (head at `position`, tail behind it)
             for i in range(drip_length):
-                pos = position + i
-                if 0 <= pos < NUM_LEDS:
+                env_pos = position + i * step
+                if 0 <= env_pos < NUM_LEDS:
                     brightness = max_brightness - ((i / drip_length) * (max_brightness - min_brightness))
 
-                    # 🔥 Fix: rotate hue so it appears lava-red/orange on your strip
+                    # Rotate hue so it appears lava-red/orange on your strip
                     display_hue = (BASE_HUE + HUE_OFFSET) % 1.0
                     r, g, b = hsv_to_rgb(display_hue, SATURATION, brightness)
 
-                    led_strip.set_rgb(pos, int(r * 255), int(g * 255), int(b * 255))
+                    # Orientation-aware write
+                    set_rgb_env(env_pos, int(r * 255), int(g * 255), int(b * 255))
 
-            position += 1       # Move the drip downward
+            # Advance the drip downward in ENV space
+            position += step
             speed *= acceleration
             time.sleep(speed)
 
