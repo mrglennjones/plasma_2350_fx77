@@ -2,7 +2,7 @@
 
 A feature-rich LED animation engine for the Pimoroni Plasma 2350W, driving a WS2812 / NeoPixel strip with 77 handcrafted effects, orientation-aware physics, comet particles, fireworks, waterfalls, meteors, neon beams, rain, and more.
 
-Designed for continuous ambient lighting, decorative installs, and interactive visual art.
+Designed for Christmas trees, handrails, continuous ambient lighting, decorative installs.
 
 # ✨ Features
 
