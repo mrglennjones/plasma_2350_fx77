@@ -9,12 +9,12 @@ import plasma
 from machine import Pin
 
 # -----------------------------
-# SHARED CONFIG / SETUP
+# LED STRIP / SETUP
 # -----------------------------
 
 NUM_LEDS = 66
 
-# Your strip tested as G → B → R, so use BGR order:
+# Set your led strip as R → G → B, order:
 led_strip = plasma.WS2812(
     NUM_LEDS,
     color_order=plasma.COLOR_ORDER_BRG
