@@ -41,7 +41,9 @@ ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
 ```
 NUM_LEDS = <NumberOfLEDS>
 ```
-
+```
+color_order=plasma.COLOR_ORDER_BRG
+```
 # 💫 Starfield Boot Mode
 
 Hold BUTTON A while pressing RESET:
