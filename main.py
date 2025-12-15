@@ -1918,19 +1918,22 @@ def effect_29(hsv_values):
 
 def effect_30(hsv_values):
     """Gravitational Wave Ripples: Smooth, undulating ripples that simulate space-time disturbances."""
-    ripple_speed = 1
-    ripple_amplitude = 0.001
-    hue_shift_speed = 5
+    ripple_speed = 1.0          # now "cycles-ish per second" scale, not ms
+    ripple_amplitude = 0.25     # spatial frequency (bigger = more ripples along strip)
+    hue_shift_speed = 0.15      # subtle hue drift speed
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        t = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0  # seconds since start
+
         for i in range(NUM_LEDS):
-            wave_phase = (i * ripple_amplitude + time.ticks_ms() * ripple_speed) % (2 * math.pi)
-            hue = (0.5 + math.sin(wave_phase) * 0.1) % 1.0
+            wave_phase = (i * ripple_amplitude + t * ripple_speed) % (2 * math.pi)
+            hue = (0.5 + math.sin(wave_phase) * 0.1 + t * hue_shift_speed) % 1.0
             brightness = (1 + math.cos(wave_phase)) / 2
+
             hsv_values[i] = (hue, 1.0, brightness)
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+            set_hsv_env(i, hue, 1.0, brightness)
 
         time.sleep(0.02)
 
