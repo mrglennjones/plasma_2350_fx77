@@ -7,16 +7,53 @@ from random import randrange, uniform, random, choice
 
 import plasma
 from machine import Pin
+from pimoroni import RGBLED
 
 # -----------------------------
 # LED STRIP / SETUP
 # -----------------------------
 
 NUM_LEDS = 66
+# initial global brightness
+BRIGHTNESS = 0.8
+
+led = RGBLED("LED_R", "LED_G", "LED_B")
+
+class LedStrip(plasma.WS2812):
+    def __init__(self, *args, brightness=1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.brightness = brightness
+
+    @property
+    def brightness(self):
+        return self._brightness
+
+    @brightness.setter
+    def brightness(self, value):
+        print(f'changed brightness to {value}')
+        self._brightness = max(0.0, min(1.0, value))
+
+    def set_rgb(self, i, r, g, b):
+        r = int(max(0, min(255, r * self.brightness)))
+        g = int(max(0, min(255, g * self.brightness)))
+        b = int(max(0, min(255, b * self.brightness)))
+        super().set_rgb(i, r, g, b)
+
+    def set_hsv(self, i, h, s, v):
+        v = max(0, min(1, v * self.brightness))
+        super().set_hsv(i, h, s, v)
+
+    def increase_brightness(self, step=0.05):
+        self.brightness += step
+
+    def decrease_brightness(self, step=0.05):
+        self.brightness -= step
+
 
 # Set your led strip as R → G → B, order:
-led_strip = plasma.WS2812(
+led_strip = LedStrip(
     NUM_LEDS,
+    brightness=BRIGHTNESS,
     color_order=plasma.COLOR_ORDER_BRG
 )
 led_strip.start()
@@ -3852,6 +3889,42 @@ def choose_boot_mode():
     print("Boot: no button -> FX SHOW")
     return "fx"
 
+# button A adds brightness initially
+brightness_direction = 1
+
+def change_brightness(pin):
+    step = 0.1
+    global brightness_direction
+    global led
+
+    if led_strip.brightness >= 1:
+        brightness_direction = -1
+    elif led_strip.brightness <= step:
+        brightness_direction = 1
+    
+    new_brightness = led_strip.brightness + step * brightness_direction
+    led_strip.brightness = new_brightness
+
+    # provide a visual indication that a limit has been reached
+    # and the direction of change will be reversed
+    if new_brightness >= 1.0:
+        # red
+        for i in range(10):
+            led.set_rgb(255, 0, 0)
+            time.sleep_ms(75)
+            led.set_rgb(0, 0, 0)
+            time.sleep_ms(75)
+    elif new_brightness <= step:
+        # green
+        for i in range(10):
+            led.set_rgb(0, 255, 0)
+            time.sleep_ms(75)
+            led.set_rgb(0, 0, 0)
+            time.sleep_ms(75)
+
+# Button_A
+btn_up = Pin('GPIO12', Pin.IN, Pin.PULL_UP)
+btn_up.irq(trigger=Pin.IRQ_FALLING, handler=change_brightness)
 
 if __name__ == "__main__":
     # Small delay so the pin and USB etc have time to settle after reset
@@ -3870,5 +3943,3 @@ if __name__ == "__main__":
         print("MODE: FX SHOW (default)")
 
     run_full_effect_show()
-
-
