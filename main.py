@@ -1603,110 +1603,259 @@ def effect_27(hsv_values):
 
 
 def effect_28(hsv_values):
-    pacman_pos = 0
-    ghost_positions = [randrange(NUM_LEDS) for _ in range(3)]
-    pill_positions = sorted([randrange(NUM_LEDS) for _ in range(5)])
-    pacman_chasing = False
-    pacman_alive = True
-    dots = [True] * NUM_LEDS
+    
+    #Pac-Man (1D LED strip) 
+    # -----------------------------
+    # TUNING / CONSTANTS
+    # -----------------------------
+    FRAME_DELAY = 0.08
 
-    def is_pill(pos):
-        return pos in pill_positions
+    DOT_HUE = 0.15
+    DOT_BRIGHT = 0.20
 
-    def is_ghost(pos):
-        return pos in ghost_positions
+    PILL_HUE = 0.0
+    PILL_SAT = 0.0
+    PILL_BRIGHT = 1.0
 
-    def move_pacman():
-        nonlocal pacman_pos
-        pacman_pos += 1
-        if pacman_pos >= NUM_LEDS:
-            pacman_pos = 0
+    PAC_HUE = 0.15
+    PAC_BRIGHT = 1.0
 
-    def move_ghosts():
-        nonlocal ghost_positions
-        for i in range(len(ghost_positions)):
-            if pacman_chasing:
-                if ghost_positions[i] > pacman_pos:
-                    ghost_positions[i] -= 1
-                elif ghost_positions[i] < pacman_pos:
-                    ghost_positions[i] += 1
-            else:
-                if randrange(2) == 0:
-                    ghost_positions[i] += 1
+    GHOST_BRIGHT = 1.0
+    GHOST_SCARED_HUE = 0.55  # blue
+
+    SCARED_DURATION_MS = 5000
+
+    NUM_GHOSTS = 3
+    NUM_PILLS = 4              # energizers
+    RESPAWN_DELAY_MS = 900
+
+    # Ghost colours (avoid dot/pac colours for readability)
+    GHOST_HUES = [0.0, 0.33, 0.75]  # red-ish, green-ish, purple-ish (in your GRB world these are "as-is" hues)
+
+    # -----------------------------
+    # HELPERS
+    # -----------------------------
+    def wrap(i: int) -> int:
+        return i % NUM_LEDS
+
+    def reseed_level(level: int):
+        # Fresh dots everywhere
+        dots = [True] * NUM_LEDS
+
+        # Energizer pills: spread-ish
+        pill_positions = set()
+        while len(pill_positions) < min(NUM_PILLS, NUM_LEDS):
+            pill_positions.add(randrange(NUM_LEDS))
+
+        # Ensure Pac-Man spawn isn't immediately a pill
+        pac_spawn = NUM_LEDS // 2
+        if pac_spawn in pill_positions:
+            pill_positions.remove(pac_spawn)
+
+        # Dots exist under pills too, but pills are "special" pickups
+        # (We’ll treat pills separately from dots.)
+        return dots, sorted(list(pill_positions))
+
+    def fade_in_level(dots, pill_positions, duration_ms=700, steps=30):
+        """Fade in dots + pills from black without flashing."""
+        # Clear to black
+        for i in range(NUM_LEDS):
+            hsv_values[i] = (0.0, 0.0, 0.0)
+            led_strip.set_hsv(i, 0.0, 0.0, 0.0)
+
+        step_delay = max(1, duration_ms // steps)
+
+        for step in range(steps + 1):
+            k = step / float(steps)
+
+            # dots
+            for i in range(NUM_LEDS):
+                if dots[i]:
+                    hsv_values[i] = (DOT_HUE, 1.0, DOT_BRIGHT * k)
                 else:
-                    ghost_positions[i] -= 1
-            if ghost_positions[i] >= NUM_LEDS:
-                ghost_positions[i] = 0
-            elif ghost_positions[i] < 0:
-                ghost_positions[i] = NUM_LEDS - 1
+                    hsv_values[i] = (0.0, 0.0, 0.0)
 
-    def update_leds():
-        # Clear strip
+            # pills on top
+            for p in pill_positions:
+                hsv_values[p] = (PILL_HUE, PILL_SAT, PILL_BRIGHT * k)
+
+            # push
+            for i in range(NUM_LEDS):
+                h, s, v = hsv_values[i]
+                led_strip.set_hsv(i, h, s, v)
+
+            time.sleep_ms(step_delay)
+
+    def spawn_ghosts(pac_pos):
+        """Spawn ghosts away from Pac-Man."""
+        ghosts = []
+        for gi in range(NUM_GHOSTS):
+            while True:
+                pos = randrange(NUM_LEDS)
+                if abs(pos - pac_pos) > max(3, NUM_LEDS // 6):
+                    ghosts.append(pos)
+                    break
+        return ghosts
+
+    def move_towards(src, dst):
+        """
+        1D shortest-step towards target on a ring.
+        Returns +1 or -1 step direction.
+        """
+        # clockwise distance
+        cw = (dst - src) % NUM_LEDS
+        ccw = (src - dst) % NUM_LEDS
+        if cw == ccw:
+            return 1 if randrange(2) == 0 else -1
+        return 1 if cw < ccw else -1
+
+    def draw_frame(dots, pill_positions, pac_pos, ghosts, scared):
+        # Base: dots (dim) or black
         for i in range(NUM_LEDS):
-            hsv_values[i] = (0.15, 1.0, 0.2 if dots[i] else 0.0)  # Dim yellow dots
-
-        # Place pills
-        for pos in pill_positions:
-            hsv_values[pos] = (0.0, 0.0, 1.0)  # White pills
-
-        # Place ghosts
-        for pos in ghost_positions:
-            if pacman_chasing:
-                hsv_values[pos] = (0.55, 1.0, 1.0)  # Blue ghosts when chased
+            if dots[i]:
+                hsv_values[i] = (DOT_HUE, 1.0, DOT_BRIGHT)
             else:
-                hsv_values[pos] = (uniform(0.0, 1.0), 1.0, 1.0)  # Random colored ghosts
+                hsv_values[i] = (0.0, 0.0, 0.0)
 
-        # Place Pac-Man
-        if pacman_alive:
-            hsv_values[pacman_pos] = (0.15, 1.0, 1.0)  # Yellow Pac-Man
-        else:
-            hsv_values[pacman_pos] = (0.0, 0.0, 0.0)  # Pac-Man disappears when dead
+        # Pills on top
+        for p in pill_positions:
+            hsv_values[p] = (PILL_HUE, PILL_SAT, PILL_BRIGHT)
 
-        # Update LED strip
+        # Ghosts
+        for gi, gp in enumerate(ghosts):
+            if scared:
+                hsv_values[gp] = (GHOST_SCARED_HUE, 1.0, GHOST_BRIGHT)
+            else:
+                hsv_values[gp] = (GHOST_HUES[gi % len(GHOST_HUES)], 1.0, GHOST_BRIGHT)
+
+        # Pac-Man on top of everything
+        hsv_values[pac_pos] = (PAC_HUE, 1.0, PAC_BRIGHT)
+
+        # Push to strip
         for i in range(NUM_LEDS):
-            led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
+            h, s, v = hsv_values[i]
+            led_strip.set_hsv(i, h, s, v)
 
-    def respawn_pacman():
-        nonlocal pacman_pos, pacman_alive
-        pacman_pos = 0  # Respawn at the start
-        pacman_alive = True
+    # -----------------------------
+    # GAME STATE
+    # -----------------------------
+    level = 1
+    dots, pill_positions = reseed_level(level)
+    pacman_pos = NUM_LEDS // 2
+    pac_dir = 1  # keep constant (no surprise direction flips)
+    ghosts = spawn_ghosts(pacman_pos)
+
+    scared = False
+    scared_until = 0
+
+    pac_alive = True
+
+    # Fade-in initial level
+    fade_in_level(dots, pill_positions)
 
     start_time = time.ticks_ms()
-    pill_eaten_time = 0
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
-        if pacman_alive:
-            move_pacman()
-            move_ghosts()
 
-            if is_pill(pacman_pos):
-                pacman_chasing = True
+        now = time.ticks_ms()
+
+        # End scared mode if timer elapsed
+        if scared and time.ticks_diff(now, scared_until) >= 0:
+            scared = False
+
+        # -----------------------------
+        # MOVE PAC-MAN (wrap at ends)
+        # -----------------------------
+        if pac_alive:
+            pacman_pos = wrap(pacman_pos + pac_dir)
+
+            # Eat pill? (energizer)
+            if pacman_pos in pill_positions:
                 pill_positions.remove(pacman_pos)
-                pill_eaten_time = time.ticks_ms()
+                scared = True
+                scared_until = time.ticks_add(now, SCARED_DURATION_MS)
 
-            if time.ticks_diff(time.ticks_ms(), pill_eaten_time) > 5000:  # 5 seconds of power-up
-                pacman_chasing = False
+            # Eat dot
+            if dots[pacman_pos]:
+                dots[pacman_pos] = False
 
-            if is_ghost(pacman_pos) and not pacman_chasing:
-                # Pac-Man is caught by a ghost
-                pacman_alive = False
-                print("Pac-Man died! Respawning...")
-                time.sleep(1)  # Brief pause to simulate "death"
+        # -----------------------------
+        # MOVE GHOSTS
+        # -----------------------------
+        for gi in range(len(ghosts)):
+            gpos = ghosts[gi]
 
-            if is_ghost(pacman_pos) and pacman_chasing:
-                ghost_positions.remove(pacman_pos)
-                ghost_positions.append(randrange(NUM_LEDS))  # Respawn ghost
+            if scared:
+                # Run away: step opposite the shortest direction to Pac-Man
+                step = -move_towards(gpos, pacman_pos)
+            else:
+                # Chase: step towards Pac-Man
+                step = move_towards(gpos, pacman_pos)
 
-            dots[pacman_pos] = False
+            # Add slight randomness so it doesn't look too "laser locked"
+            if randrange(100) < 15:
+                step = 1 if randrange(2) == 0 else -1
 
-        update_leds()
-        time.sleep(0.1)  # Adjust for speed of the game
+            ghosts[gi] = wrap(gpos + step)
 
-        if not pacman_alive:
-            time.sleep(1)  # Wait before respawn
-            respawn_pacman()
+        # -----------------------------
+        # COLLISIONS (true-to-arcade core rule)
+        # -----------------------------
+        if pac_alive:
+            if pacman_pos in ghosts:
+                if scared:
+                    # Eat the ghost: respawn it away from Pac-Man
+                    idx = ghosts.index(pacman_pos)
+                    # respawn
+                    while True:
+                        rp = randrange(NUM_LEDS)
+                        if abs(rp - pacman_pos) > max(3, NUM_LEDS // 6) and rp not in ghosts:
+                            ghosts[idx] = rp
+                            break
+                else:
+                    # Ghost kills Pac-Man
+                    pac_alive = False
+                    # Show the death moment briefly (Pac-Man disappears after)
+                    draw_frame(dots, pill_positions, pacman_pos, ghosts, scared=False)
+                    time.sleep_ms(RESPAWN_DELAY_MS)
+
+        # -----------------------------
+        # LEVEL COMPLETE?
+        # -----------------------------
+        if (not any(dots)) and (len(pill_positions) == 0):
+            # Next level: reseed + fade-in (no flashing)
+            level += 1
+            dots, pill_positions = reseed_level(level)
+
+            # Reset positions (classic feel: Pac returns mid, ghosts re-seed)
+            pacman_pos = NUM_LEDS // 2
+            pac_dir = 1
+            ghosts = spawn_ghosts(pacman_pos)
+
+            scared = False
+
+            fade_in_level(dots, pill_positions)
+
+        # -----------------------------
+        # RESPAWN PAC-MAN IF DEAD
+        # -----------------------------
+        if not pac_alive:
+            # Respawn
+            pacman_pos = NUM_LEDS // 2
+            pac_dir = 1
+            pac_alive = True
+            # Important: do NOT re-enable dots here (fixes “dots reappearing” bug)
+            # Also do not force scared mode.
+
+        # -----------------------------
+        # DRAW
+        # -----------------------------
+        draw_frame(dots, pill_positions, pacman_pos, ghosts, scared)
+
+        time.sleep(FRAME_DELAY)
 
     return hsv_values
+
 
 
 def effect_29(hsv_values):
