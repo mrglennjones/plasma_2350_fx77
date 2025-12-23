@@ -14,7 +14,7 @@ Orientation-aware engine
 Effects automatically adapt when the 2350W is mounted at the top or bottom of the strip.
 
 Starfield boot mode
-Hold BUTTON A (only supported on 2350W) on reset to launch the cinematic starfield mode.
+Hold BUTTON A on reset to launch the cinematic starfield mode.
 
 Continuous FX show with smooth transitions
 
@@ -22,17 +22,17 @@ Random timing & variation
 
 # 🎛️ Hardware Requirements
 
-- Pimoroni Plasma Stick / 2350W / 2040 - Compatible with latest Plasma firmware (v1.0.0) [Grab one here](https://shop.pimoroni.com/products/plasma-2350-w?variant=54829890601339)
+Pimoroni Plasma Stick / 2350W / 2040 - Compatible with latest Plasma firmware (v1.0.0) [Grab one here](https://shop.pimoroni.com/products/plasma-2350-w?variant=54829890601339)
 
-- WS2812 / NeoPixel LED strip
+WS2812 / NeoPixel LED strip
 
-- USB-C power supply
+USB-C power supply
 
-- Thonny or any MicroPython REPL for uploading code
+Thonny or any MicroPython REPL for uploading code
 
 # 🧭 LED Amount & Orientation System
 
-Review the `configuration.py`:
+Set in your script:
 
 ```
 ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
@@ -46,7 +46,7 @@ color_order=plasma.COLOR_ORDER_BRG
 ```
 # 💫 Starfield Boot Mode
 
-Hold BUTTON A (only available on 2350W) while pressing RESET:
+Hold BUTTON A while pressing RESET:
 
 Held: boot into the starfield + comets mode
 
@@ -56,14 +56,13 @@ Starfield runs until the button is pressed again.
 
 # 🚀 Getting Started
 
-- Flash the Plasma 2040/2350W MicroPython firmware v1.0.0
+Flash the Plasma 2350W MicroPython firmware v1.0.0
 
-- Copy `main.py`, `eff.py` and `configuration.py` to your board
+Copy main.py to your board
 
-- for Plasma 2040W: copy `eff.mpy` instead of `eff.py` - otherwise you'll get memory errors
+Reboot
 
-- Reboot
+Hold BUTTON A on boot for starfield mode
 
-- Hold BUTTON A on boot for starfield mode
+Otherwise enjoy the full FX show
 
-Otherwise enjoy the full FX show.
