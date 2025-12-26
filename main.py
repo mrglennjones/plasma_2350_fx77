@@ -199,10 +199,21 @@ def update_stars():
 
 
 def run_comet():
-    """Animate a single comet gliding across the strip. Aborts if button is pressed."""
+    """Animate a single comet gliding across a RANDOM SHORT SEGMENT of the strip.
+       Aborts immediately if button is pressed."""
+    # --- Tail length (your existing behaviour) ---
     trail_len = randrange(COMET_MIN_TRAIL, COMET_MAX_TRAIL + 1)
     if trail_len > NUM_LEDS:
         trail_len = NUM_LEDS
+
+    # --- NEW: travel distance (how far the comet moves) ---
+    # Tune these to taste. These create tiny/medium/long streaks.
+    COMET_TRAVEL_MIN = max(6, trail_len + 2)          # at least a bit longer than the tail
+    COMET_TRAVEL_MAX = max(COMET_TRAVEL_MIN, int(NUM_LEDS * 0.75))  # never full-strip by default
+
+    travel_len = randrange(COMET_TRAVEL_MIN, COMET_TRAVEL_MAX + 1)
+    if travel_len > NUM_LEDS:
+        travel_len = NUM_LEDS
 
     # Random direction
     direction = 1 if randrange(2) == 0 else -1
@@ -211,21 +222,32 @@ def run_comet():
     comet_delay = uniform(COMET_MIN_SPEED, COMET_MAX_SPEED)
     head_brightness = uniform(COMET_HEAD_BRIGHT_MIN, COMET_HEAD_BRIGHT_MAX)
 
+    # --- NEW: pick a random segment on the strip that fits travel_len ---
+    # We move an integer "head" along env coords [0 .. NUM_LEDS-1].
+    if travel_len >= NUM_LEDS:
+        start_pos = 0
+        end_pos = NUM_LEDS - 1
+    else:
+        start_pos = randrange(0, NUM_LEDS - travel_len + 1)
+        end_pos = start_pos + travel_len - 1
+
+    # Set head start/end depending on direction.
+    # We include a little off-strip space equal to tail_len so the tail can enter/exit naturally.
     if direction == 1:
-        head = -trail_len
-        end = NUM_LEDS + trail_len
+        head = start_pos - trail_len
+        end = end_pos + trail_len
         step = 1
     else:
-        head = NUM_LEDS + trail_len
-        end = -trail_len
+        head = end_pos + trail_len
+        end = start_pos - trail_len
         step = -1
 
+    # Walk until head passes end
     while head != end:
         if button_pressed():
-            # Abort comet immediately if button is pressed
             return
 
-        # Draw background first
+        # Draw background first (no blinking: same method you already used)
         for i in range(NUM_LEDS):
             led_strip.set_hsv(i, star_hue[i], star_sat[i], star_current[i])
 
@@ -235,16 +257,14 @@ def run_comet():
             if 0 <= pos < NUM_LEDS:
                 # Fraction along tail: 0 at the end, 1 at the head
                 frac = (trail_len - k) / float(trail_len)
-                # Use squared falloff for a bright head, smooth tail
                 comet_b = head_brightness * (frac * frac)
 
-                # Slight colour gradient: head more coloured, tail whiter
-                tail_sat = COMET_SAT * frac   # more saturated at head
+                tail_sat = COMET_SAT * frac
                 tail_hue = COMET_HUE
 
                 led_strip.set_hsv(pos, tail_hue, tail_sat, comet_b)
 
-                # Gentle afterglow: boost star brightness a little, but keep within range
+                # Afterglow
                 glow_boost = comet_b * AFTERGLOW_MAX
                 new_star_b = min(star_current[pos] + glow_boost, STAR_MAX_BRIGHT)
                 star_current[pos] = new_star_b
