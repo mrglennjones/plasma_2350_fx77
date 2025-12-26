@@ -1603,8 +1603,8 @@ def effect_27(hsv_values):
 
 
 def effect_28(hsv_values):
-    
-    #Pac-Man (1D LED strip) 
+
+    # Pac-Man (1D LED strip)
     # -----------------------------
     # TUNING / CONSTANTS
     # -----------------------------
@@ -1627,10 +1627,17 @@ def effect_28(hsv_values):
 
     NUM_GHOSTS = 3
     NUM_PILLS = 4              # energizers
-    RESPAWN_DELAY_MS = 900
+    RESPAWN_DELAY_MS = 900      # “death pause” before respawn
+
+    # NEW: Arcade-like “READY” grace window after respawn
+    RESPAWN_GRACE_MS = 1500     # invulnerable after respawn
+
+    # Optional: anti-spawn-camping behaviour
+    ENABLE_SPAWN_CLEAR = True
+    SPAWN_CLEAR_RADIUS = 4
 
     # Ghost colours (avoid dot/pac colours for readability)
-    GHOST_HUES = [0.0, 0.33, 0.75]  # red-ish, green-ish, purple-ish (in your GRB world these are "as-is" hues)
+    GHOST_HUES = [0.0, 0.33, 0.75]  # red-ish, green-ish, purple-ish
 
     # -----------------------------
     # HELPERS
@@ -1642,7 +1649,7 @@ def effect_28(hsv_values):
         # Fresh dots everywhere
         dots = [True] * NUM_LEDS
 
-        # Energizer pills: spread-ish
+        # Energizer pills
         pill_positions = set()
         while len(pill_positions) < min(NUM_PILLS, NUM_LEDS):
             pill_positions.add(randrange(NUM_LEDS))
@@ -1652,13 +1659,10 @@ def effect_28(hsv_values):
         if pac_spawn in pill_positions:
             pill_positions.remove(pac_spawn)
 
-        # Dots exist under pills too, but pills are "special" pickups
-        # (We’ll treat pills separately from dots.)
         return dots, sorted(list(pill_positions))
 
     def fade_in_level(dots, pill_positions, duration_ms=700, steps=30):
         """Fade in dots + pills from black without flashing."""
-        # Clear to black
         for i in range(NUM_LEDS):
             hsv_values[i] = (0.0, 0.0, 0.0)
             led_strip.set_hsv(i, 0.0, 0.0, 0.0)
@@ -1668,18 +1672,15 @@ def effect_28(hsv_values):
         for step in range(steps + 1):
             k = step / float(steps)
 
-            # dots
             for i in range(NUM_LEDS):
                 if dots[i]:
                     hsv_values[i] = (DOT_HUE, 1.0, DOT_BRIGHT * k)
                 else:
                     hsv_values[i] = (0.0, 0.0, 0.0)
 
-            # pills on top
             for p in pill_positions:
                 hsv_values[p] = (PILL_HUE, PILL_SAT, PILL_BRIGHT * k)
 
-            # push
             for i in range(NUM_LEDS):
                 h, s, v = hsv_values[i]
                 led_strip.set_hsv(i, h, s, v)
@@ -1698,11 +1699,7 @@ def effect_28(hsv_values):
         return ghosts
 
     def move_towards(src, dst):
-        """
-        1D shortest-step towards target on a ring.
-        Returns +1 or -1 step direction.
-        """
-        # clockwise distance
+        """1D shortest-step towards target on a ring. Returns +1 or -1."""
         cw = (dst - src) % NUM_LEDS
         ccw = (src - dst) % NUM_LEDS
         if cw == ccw:
@@ -1728,7 +1725,7 @@ def effect_28(hsv_values):
             else:
                 hsv_values[gp] = (GHOST_HUES[gi % len(GHOST_HUES)], 1.0, GHOST_BRIGHT)
 
-        # Pac-Man on top of everything
+        # Pac-Man on top
         hsv_values[pac_pos] = (PAC_HUE, 1.0, PAC_BRIGHT)
 
         # Push to strip
@@ -1741,14 +1738,19 @@ def effect_28(hsv_values):
     # -----------------------------
     level = 1
     dots, pill_positions = reseed_level(level)
+
     pacman_pos = NUM_LEDS // 2
-    pac_dir = 1  # keep constant (no surprise direction flips)
+    pac_dir = 1  # constant direction (no surprise flips)
+
     ghosts = spawn_ghosts(pacman_pos)
 
     scared = False
     scared_until = 0
 
     pac_alive = True
+
+    # NEW: respawn invulnerability timer
+    respawn_until_ms = 0
 
     # Fade-in initial level
     fade_in_level(dots, pill_positions)
@@ -1758,6 +1760,9 @@ def effect_28(hsv_values):
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
 
         now = time.ticks_ms()
+
+        # “Safe” means we are within the respawn grace window
+        safe = time.ticks_diff(respawn_until_ms, now) > 0
 
         # End scared mode if timer elapsed
         if scared and time.ticks_diff(now, scared_until) >= 0:
@@ -1786,13 +1791,13 @@ def effect_28(hsv_values):
             gpos = ghosts[gi]
 
             if scared:
-                # Run away: step opposite the shortest direction to Pac-Man
+                # Run away
                 step = -move_towards(gpos, pacman_pos)
             else:
-                # Chase: step towards Pac-Man
+                # Chase
                 step = move_towards(gpos, pacman_pos)
 
-            # Add slight randomness so it doesn't look too "laser locked"
+            # Small randomness
             if randrange(100) < 15:
                 step = 1 if randrange(2) == 0 else -1
 
@@ -1801,21 +1806,19 @@ def effect_28(hsv_values):
         # -----------------------------
         # COLLISIONS (true-to-arcade core rule)
         # -----------------------------
-        if pac_alive:
-            if pacman_pos in ghosts:
-                if scared:
-                    # Eat the ghost: respawn it away from Pac-Man
-                    idx = ghosts.index(pacman_pos)
-                    # respawn
-                    while True:
-                        rp = randrange(NUM_LEDS)
-                        if abs(rp - pacman_pos) > max(3, NUM_LEDS // 6) and rp not in ghosts:
-                            ghosts[idx] = rp
-                            break
-                else:
-                    # Ghost kills Pac-Man
+        if pac_alive and (pacman_pos in ghosts):
+            if scared:
+                # Eat the ghost: respawn it away from Pac-Man
+                idx = ghosts.index(pacman_pos)
+                while True:
+                    rp = randrange(NUM_LEDS)
+                    if abs(rp - pacman_pos) > max(3, NUM_LEDS // 6) and rp not in ghosts:
+                        ghosts[idx] = rp
+                        break
+            else:
+                # Ghost kills Pac-Man, BUT NOT during respawn grace
+                if not safe:
                     pac_alive = False
-                    # Show the death moment briefly (Pac-Man disappears after)
                     draw_frame(dots, pill_positions, pacman_pos, ghosts, scared=False)
                     time.sleep_ms(RESPAWN_DELAY_MS)
 
@@ -1823,16 +1826,15 @@ def effect_28(hsv_values):
         # LEVEL COMPLETE?
         # -----------------------------
         if (not any(dots)) and (len(pill_positions) == 0):
-            # Next level: reseed + fade-in (no flashing)
             level += 1
             dots, pill_positions = reseed_level(level)
 
-            # Reset positions (classic feel: Pac returns mid, ghosts re-seed)
             pacman_pos = NUM_LEDS // 2
             pac_dir = 1
             ghosts = spawn_ghosts(pacman_pos)
 
             scared = False
+            respawn_until_ms = 0  # clear any grace timer
 
             fade_in_level(dots, pill_positions)
 
@@ -1840,12 +1842,22 @@ def effect_28(hsv_values):
         # RESPAWN PAC-MAN IF DEAD
         # -----------------------------
         if not pac_alive:
-            # Respawn
             pacman_pos = NUM_LEDS // 2
             pac_dir = 1
             pac_alive = True
-            # Important: do NOT re-enable dots here (fixes “dots reappearing” bug)
-            # Also do not force scared mode.
+
+            # Start invulnerability window (“READY”)
+            respawn_until_ms = time.ticks_add(time.ticks_ms(), RESPAWN_GRACE_MS)
+
+            # Optional: push ghosts away if they’re camping the spawn
+            if ENABLE_SPAWN_CLEAR:
+                for gi in range(len(ghosts)):
+                    d = abs(ghosts[gi] - pacman_pos)
+                    d = min(d, NUM_LEDS - d)  # wrap-aware distance
+                    if d <= SPAWN_CLEAR_RADIUS:
+                        ghosts[gi] = wrap(pacman_pos + SPAWN_CLEAR_RADIUS + 2 + gi)
+
+            # Important: do NOT re-enable dots/pills here.
 
         # -----------------------------
         # DRAW
@@ -1855,6 +1867,7 @@ def effect_28(hsv_values):
         time.sleep(FRAME_DELAY)
 
     return hsv_values
+
 
 
 
