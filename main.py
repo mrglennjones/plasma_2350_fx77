@@ -10,7 +10,7 @@ from configuration import *
 
 import plasma
 from os import uname
-from machine import Pin
+from machine import Pin, Timer
 from pimoroni import RGBLED
 
 # Plasma Stick 2040 has no LED
@@ -414,6 +414,8 @@ def get_random_timeout_duration():
 
 def run_full_effect_show():
     """Endless loop cycling through your 77 effects, printing FX + runtime."""
+    global brightness_button
+    brightness_button = enable_brightness_button()
     while True:
         manager.select_next_effect()
         fx_index = manager.current_effect          # 0-based
@@ -451,42 +453,94 @@ def choose_boot_mode():
     print("Boot: no button -> FX SHOW")
     return "fx"
 
+# -----------------------------
+# BRIGHTNESS CONTROL (BUTTON A during the FX show)
+# -----------------------------
+BRIGHTNESS_STEP = 0.1
+BUTTON_DEBOUNCE_MS = 250   # ignore contact bounce after a press
+BLINK_INTERVAL_MS = 75
+BLINK_COUNT = 10
+
 # button A adds brightness initially
 brightness_direction = 1
+_last_press_ms = None
+_blink_timer = None
+_blink_left = 0
+_blink_rgb = (0, 0, 0)
+
+
+def _blink_tick(timer):
+    """Timer callback: toggle the on-board LED until the blink is done."""
+    global _blink_left
+    if _blink_left <= 0:
+        timer.deinit()
+        led.set_rgb(0, 0, 0)
+        return
+    if _blink_left % 2 == 0:
+        led.set_rgb(*_blink_rgb)
+    else:
+        led.set_rgb(0, 0, 0)
+    _blink_left -= 1
+
+
+def blink_onboard_led(r, g, b):
+    """Blink the on-board LED in the background without pausing the effects."""
+    global _blink_timer, _blink_left, _blink_rgb
+    if 'led' not in globals():
+        return  # e.g. Plasma Stick 2040 has no on-board RGB LED
+    if _blink_timer is not None:
+        _blink_timer.deinit()
+    _blink_rgb = (r, g, b)
+    _blink_left = BLINK_COUNT * 2
+    _blink_timer = Timer(mode=Timer.PERIODIC, period=BLINK_INTERVAL_MS,
+                         callback=_blink_tick)
+
 
 def change_brightness(pin):
-    step = 0.1
-    global brightness_direction
-    global led
+    """IRQ handler for BUTTON A: one brightness step per press.
 
+    Kept short on purpose: it only changes a number and starts a timer,
+    so the running effect does not freeze while the LED blinks.
+    """
+    global brightness_direction, _last_press_ms
+
+    now = time.ticks_ms()
+    if (_last_press_ms is not None
+            and time.ticks_diff(now, _last_press_ms) < BUTTON_DEBOUNCE_MS):
+        return  # contact bounce of the same press
+    if pin.value() != 0:
+        return  # glitch, the button is not actually held
+    _last_press_ms = now
+
+    step = BRIGHTNESS_STEP
     if led_strip.brightness >= 1:
         brightness_direction = -1
     elif led_strip.brightness <= step:
         brightness_direction = 1
-    
-    new_brightness = led_strip.brightness + step * brightness_direction
+
+    # round to avoid float drift (0.1 + 0.1 + ... != 1.0), which made the
+    # limit checks miss and let the brightness reach 0 (strip off)
+    new_brightness = round(led_strip.brightness + step * brightness_direction, 2)
     led_strip.brightness = new_brightness
 
     # provide a visual indication that a limit has been reached
     # and the direction of change will be reversed
     if new_brightness >= 1.0:
-        # red
-        for i in range(10):
-            led.set_rgb(255, 0, 0)
-            time.sleep_ms(75)
-            led.set_rgb(0, 0, 0)
-            time.sleep_ms(75)
+        blink_onboard_led(255, 0, 0)  # red
     elif new_brightness <= step:
-        # green
-        for i in range(10):
-            led.set_rgb(0, 255, 0)
-            time.sleep_ms(75)
-            led.set_rgb(0, 0, 0)
-            time.sleep_ms(75)
+        blink_onboard_led(0, 255, 0)  # green
 
-# Button_A
-btn_up = Pin('GPIO12', Pin.IN, Pin.PULL_UP)
-btn_up.irq(trigger=Pin.IRQ_FALLING, handler=change_brightness)
+
+def enable_brightness_button():
+    """Start listening for brightness presses.
+
+    Called only once the FX show starts, so holding BUTTON A at boot
+    (starfield mode) or pressing it to leave the starfield does not
+    change the brightness as well.
+    """
+    btn = Pin('GPIO12', Pin.IN, Pin.PULL_UP)
+    btn.irq(trigger=Pin.IRQ_FALLING, handler=change_brightness)
+    return btn
 
 if __name__ == "__main__":
     # Small delay so the pin and USB etc have time to settle after reset
