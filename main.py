@@ -4,6 +4,7 @@ import time
 import math
 import gc
 from random import randrange, uniform, random, choice
+import eff
 from eff import *
 from configuration import *
 
@@ -347,8 +348,11 @@ class EffectManager:
 
         - For 'timed' effects: set a random TIMEOUT_DURATION, let the effect honour it.
         - For 'full-run' effects: just let them do their thing once.
+
+        The effects live in eff.py and read eff.TIMEOUT_DURATION, so the
+        duration has to be set there. A plain global here would only
+        change main.py's own copy.
         """
-        global TIMEOUT_DURATION
 
         fx_index = self.current_effect          # 0-based
         fx_number = fx_index + 1                # 1–77
@@ -359,7 +363,7 @@ class EffectManager:
             self.hsv_values = fx_fn(self.hsv_values, led_strip)
         else:
             # Timed / ambient: push a random duration into the global timeout
-            TIMEOUT_DURATION = get_random_timeout_duration()
+            eff.TIMEOUT_DURATION = get_random_timeout_duration()
             self.hsv_values = fx_fn(self.hsv_values, led_strip)
 
 
