@@ -1,0 +1,1521 @@
+<title>Virtual Plasma</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a bench for one LED strip. The lit stage stays in view on the left,
+   the code and its knobs sit on the right; on phones they stack. One dark look
+   on purpose: LEDs read correctly only against a dark room. */
+:root {
+  color-scheme: dark;
+  --bg: #0f1216;
+  --panel: #161a20;
+  --panel-2: #1c2129;
+  --line: #29303a;
+  --line-2: #363e4a;
+  --text: #e3e6ea;
+  --muted: #949dab;
+  --faint: #626b78;
+  --gold: #d9a548;          /* ENIG pad gold */
+  --gold-ink: #1d1505;
+  --gold-soft: rgba(217, 165, 72, 0.14);
+  --ok: #6fd3a0;
+  --warn: #e8bb62;
+  --err: #ff7f74;
+  --stage: #06080a;
+  --stage-glow: #10151b;
+  --led-body: #1e232b;
+  --wire: rgba(150, 160, 175, 0.16);
+  --code-bg: #0c0f13;
+  --font-display: "Chakra Petch", "IBM Plex Sans", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--font-body);
+}
+.app {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding-block: 18px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+code, kbd, .mono { font-family: var(--font-mono); }
+code { font-size: 0.92em; color: #f0d9ad; }
+
+/* header */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand-mark {
+  flex: none;
+  width: 38px; height: 38px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  display: grid;
+  grid-template-columns: repeat(3, 6px);
+  gap: 4px;
+  place-content: center;
+}
+.brand-mark i { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+.brand-mark i:nth-child(2) { background: #ff6a3d; box-shadow: 0 0 8px #ff6a3d; }
+.brand-mark i:nth-child(3) { background: #47a8ff; box-shadow: 0 0 8px #47a8ff; }
+h1 {
+  margin: 0;
+  font: 600 1.45rem/1.15 var(--font-display);
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 0.9rem; max-width: 62ch; }
+.status {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.status[data-state="loading"] .dot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+.status[data-state="running"] .dot { background: var(--gold); animation: pulse 0.8s ease-in-out infinite; }
+.status[data-state="ready"] .dot { background: var(--ok); }
+.status[data-state="error"] .dot { background: var(--err); }
+.status[data-state="error"] { color: var(--err); border-color: rgba(255, 127, 116, 0.4); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* main grid */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 1000px) {
+  .grid { grid-template-columns: minmax(0, 1.2fr) minmax(380px, 1fr); align-items: start; }
+  .stage-col { position: sticky; top: calc(12px + env(safe-area-inset-top, 0px)); }
+}
+.stage-col, .side-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.stage {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: radial-gradient(ellipse 70% 60% at 50% 55%, var(--stage-glow), var(--stage) 75%);
+  overflow: hidden;
+  min-height: 140px;
+}
+#leds { display: block; width: 100%; touch-action: none; }
+.stage-note {
+  position: absolute; left: 14px; bottom: 12px; right: 14px;
+  font-size: 0.85rem; color: var(--muted);
+  pointer-events: none;
+}
+.stage-note.err { color: var(--err); pointer-events: auto; white-space: pre-wrap; }
+
+.inspect {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  min-height: 24px;
+  font-size: 0.85rem; color: var(--muted);
+}
+.inspect .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line-2); flex: none; }
+.inspect b { color: var(--text); font-weight: 500; }
+.inspect .mono { font-size: 0.82rem; }
+
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.clock { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.95rem; color: var(--muted); min-width: 13ch; }
+.clock b { color: var(--text); font-weight: 500; }
+.transport .spacer { flex: 1; }
+
+.timeline-wrap { display: flex; flex-direction: column; gap: 6px; }
+.label-row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); }
+.label-row .k { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; color: var(--faint); font-weight: 600; }
+#timeline { display: block; width: 100%; height: 104px; border-radius: 8px; border: 1px solid var(--line); background: var(--stage); cursor: col-resize; touch-action: none; }
+.stats { font-size: 0.85rem; color: var(--muted); min-height: 1.4em; font-variant-numeric: tabular-nums; }
+.stats .warn { color: var(--warn); }
+
+/* panels and controls */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  min-width: 0;
+}
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field > label, .field > .label {
+  font-size: 0.75rem; color: var(--muted);
+  letter-spacing: 0.04em;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.field > label .mono, .field > .label .mono { color: var(--text); letter-spacing: 0; }
+.field output { font-family: var(--font-mono); color: var(--text); font-size: 0.8rem; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+select, input[type="number"], input[type="text"] {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 14px var(--font-body);
+}
+input[type="number"] { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible, summary:focus-visible, .filebtn:focus-within {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+input[type="range"] { width: 100%; accent-color: var(--gold); }
+input[type="checkbox"] { accent-color: var(--gold); width: 16px; height: 16px; margin: 0; }
+.check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.88rem; color: var(--muted); cursor: pointer; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 500 14px var(--font-body);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: #4a5361; }
+.btn.sm { height: 30px; padding: 0 10px; font-size: 13px; }
+.btn.icon { width: 40px; padding: 0; }
+.btn.primary { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); font-weight: 600; }
+.btn.primary:hover { background: #e5b257; }
+.btn.ghost { background: transparent; }
+.btn svg { width: 16px; height: 16px; fill: currentColor; }
+kbd { font-size: 0.72rem; opacity: 0.75; font-weight: 500; }
+
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; background: var(--panel-2); max-width: 100%; }
+.seg button {
+  border: 0; background: transparent; color: var(--muted);
+  height: 32px; padding: 0 11px;
+  font: 500 13px var(--font-body);
+  cursor: pointer;
+  border-right: 1px solid var(--line-2);
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--gold-soft); color: var(--gold); }
+.seg.mono button { font-family: var(--font-mono); font-size: 12.5px; padding: 0 9px; }
+
+details.adv { border-top: 1px solid var(--line); padding-top: 10px; }
+details.adv summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; list-style: none; display: flex; align-items: center; gap: 6px; }
+details.adv summary::before { content: "▸"; font-size: 0.8em; transition: transform 0.15s; }
+details.adv[open] summary::before { transform: rotate(90deg); }
+details.adv[open] summary { margin-bottom: 12px; }
+details.adv .row { margin-bottom: 10px; }
+.help { font-size: 0.8rem; color: var(--faint); margin: 0; }
+
+.files { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 12px; }
+.files .src { font-size: 0.8rem; color: var(--muted); min-width: 0; overflow-wrap: anywhere; flex: 1 1 200px; }
+.filebtn { position: relative; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+
+/* editor */
+.ed-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ed-head .fn { font: 500 14px var(--font-mono); color: var(--gold); }
+.ed-head .where { font-size: 0.78rem; color: var(--faint); }
+.badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; background: var(--gold-soft); color: var(--gold); letter-spacing: 0.03em; }
+.ed-head .sp { flex: 1; }
+.code-wrap {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code-bg);
+  overflow: hidden;
+  height: min(54vh, 560px);
+  min-height: 260px;
+}
+.gutter, #code {
+  font: 12.5px/1.6 var(--font-mono);
+  padding: 10px 0;
+  margin: 0;
+}
+.gutter {
+  flex: none;
+  min-width: 3.4em;
+  padding-right: 8px; padding-left: 6px;
+  text-align: right;
+  color: var(--faint);
+  overflow: hidden;
+  user-select: none;
+  border-right: 1px solid var(--line);
+  white-space: pre;
+}
+.gutter .err { color: var(--err); background: rgba(255, 127, 116, 0.14); }
+#code {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  padding-left: 12px; padding-right: 12px;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+  caret-color: var(--gold);
+}
+#code:focus-visible { outline: none; }
+.code-wrap:focus-within { border-color: var(--gold); }
+.ed-foot { font-size: 0.78rem; color: var(--faint); }
+
+.con-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--muted); letter-spacing: 0.04em; }
+#log {
+  margin: 0;
+  max-height: 200px; min-height: 64px;
+  overflow: auto;
+  font: 12.5px/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+#log .out { color: var(--text); }
+#log .err { color: var(--err); }
+#log .warn { color: var(--warn); }
+#log .sep { color: var(--faint); }
+
+footer { font-size: 0.82rem; color: var(--faint); max-width: 100ch; display: flex; flex-direction: column; gap: 6px; }
+footer p { margin: 0; }
+footer a { color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .status .dot { animation: none !important; }
+}
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div>
+        <h1>Virtual Plasma</h1>
+        <p>Effects from <code>eff.py</code> run as Python right in the browser, with a virtual clock and emulation of the WS2812 strip firmware.</p>
+      </div>
+    </div>
+    <div class="status" id="status" data-state="loading" role="status" aria-live="polite"><span class="dot"></span><span id="status-text">Loading Python…</span></div>
+  </header>
+
+  <main class="grid">
+    <section class="stage-col" aria-label="LED strip">
+      <div class="stage" id="stage">
+        <canvas id="leds" aria-label="Simulated LED strip"></canvas>
+        <div class="stage-note" id="stage-note">Preparing Python in the browser. The first load downloads about 14 MB; after that it comes from the cache.</div>
+      </div>
+      <div class="inspect" id="inspect">Hover over an LED to see its index and value.</div>
+
+      <div class="transport">
+        <button class="btn icon" id="play" aria-label="Pause"></button>
+        <button class="btn icon" id="restart" aria-label="Restart" title="Restart">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2h2v12H3zM6 8l7-5.5v11z"/></svg>
+        </button>
+        <div class="clock" aria-live="off"><b id="t-now">0.00</b> / <span id="t-end">–</span> s</div>
+        <div class="spacer"></div>
+        <div class="seg mono" id="speed" role="group" aria-label="Playback speed">
+          <button data-v="0.25">0.25×</button><button data-v="0.5">0.5×</button><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="4">4×</button>
+        </div>
+        <label class="check"><input type="checkbox" id="loop"> Loop</label>
+      </div>
+
+      <div class="timeline-wrap">
+        <div class="label-row"><span class="k">Timeline</span><span>time across, LEDs up (0 at the bottom) · click or drag to seek</span></div>
+        <canvas id="timeline" aria-label="Timeline of the whole effect run"></canvas>
+      </div>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section class="side-col">
+      <div class="panel" aria-label="Settings">
+        <div class="field">
+          <label for="effect">Effect</label>
+          <select id="effect"></select>
+        </div>
+        <div class="row">
+          <div class="field"><label for="num-leds"><span class="mono">NUM_LEDS</span></label><input id="num-leds" type="number" min="1" max="1000" step="1"></div>
+          <div class="field"><label for="orientation"><span class="mono">ORIENTATION</span></label><select id="orientation"><option value="BOTTOM">BOTTOM</option><option value="TOP">TOP</option></select></div>
+          <div class="field"><label for="timeout">Effect duration (s)</label><input id="timeout" type="number" min="1" max="120" step="1"></div>
+        </div>
+        <div class="field">
+          <label for="brightness"><span class="mono">BRIGHTNESS</span><output id="bright-out" for="brightness"></output></label>
+          <input id="brightness" type="range" min="0.05" max="1" step="0.05">
+        </div>
+        <div class="field">
+          <span class="label">Strip shape</span>
+          <div class="seg" id="layout" role="group" aria-label="Strip shape">
+            <button data-v="strip">Strip</button><button data-v="column">Column</button><button data-v="tree">Tree</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="colormap">Strip colors</label>
+          <select id="colormap">
+            <option value="rg">As on the author's strip: R and G swapped</option>
+            <option value="none">Correctly wired strip (no swap)</option>
+            <option value="rb">R and B swapped</option>
+            <option value="gb">G and B swapped</option>
+            <option value="rot1">Rotate R→G→B→R</option>
+            <option value="rot2">Rotate R→B→G→R</option>
+          </select>
+          <p class="help">The effects in <code>eff.py</code> are tuned for a strip that swaps red and green (e.g. <code>set_rgb(i, g, r, b)</code> or “hue 0.33 = red”). This setting only changes the display, not the values in the code.</p>
+        </div>
+        <details class="adv" id="adv">
+          <summary>Advanced</summary>
+          <div class="row">
+            <div class="field">
+              <label for="model">Strip model</label>
+              <select id="model">
+                <option value="ledstrip">LedStrip from main.py (brightness, clamping)</option>
+                <option value="raw">Bare plasma.WS2812</option>
+              </select>
+            </div>
+            <div class="field"><label for="seed">Random seed</label><input id="seed" type="number" min="0" step="1"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label for="cost">Time per LED write (µs)</label><input id="cost" type="number" min="0" max="2000" step="5"></div>
+            <div class="field"><label for="fps">Strip refresh (Hz)</label><input id="fps" type="number" min="10" max="240" step="1"></div>
+            <div class="field"><label for="extra">Extra time for long effects (s)</label><input id="extra" type="number" min="0" max="120" step="5"></div>
+          </div>
+          <label class="check"><input type="checkbox" id="gamma"> Firmware gamma correction (dark values below 22 don't light up on the strip)</label>
+          <p class="help">Time per write estimates how long one <code>set_hsv</code> or <code>set_rgb</code> call takes in MicroPython, including the loop. For effects without <code>sleep</code> it sets their speed.</p>
+        </details>
+        <div class="files">
+          <span class="btn ghost sm filebtn">Load your own .py<input type="file" id="file" accept=".py,.txt,text/plain,text/x-python" multiple aria-label="Load your own eff.py or configuration.py"></span>
+          <span class="src" id="src-label"></span>
+        </div>
+      </div>
+
+      <div class="panel" aria-label="Effect code">
+        <div class="ed-head">
+          <span class="fn" id="fn-name"></span>
+          <span class="where" id="fn-where"></span>
+          <span class="badge" id="edited" hidden>edited</span>
+          <span class="sp"></span>
+          <button class="btn ghost sm" id="reset">Restore original</button>
+          <button class="btn ghost sm" id="copy">Copy</button>
+          <button class="btn primary sm" id="run">Run <kbd>Ctrl+Enter</kbd></button>
+        </div>
+        <div class="code-wrap">
+          <pre class="gutter" id="gutter" aria-hidden="true"></pre>
+          <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off" aria-label="Python code of the effect"></textarea>
+        </div>
+        <div class="ed-foot">Tab inserts 4 spaces; Esc then Tab leaves the editor. Edits are remembered by this browser.</div>
+      </div>
+
+      <div class="panel" aria-label="Output">
+        <div class="con-head"><span><code>print()</code> output and errors</span><button class="btn ghost sm" id="clear-log">Clear</button></div>
+        <pre id="log" aria-live="polite"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Time is virtual: <code>time.sleep</code> advances it instantly and every LED write adds an estimated compute cost, so an effect runs at the speed it would on the board, not at the browser's speed. As in the firmware, the strip is sampled 60× a second, so a half-drawn frame shows up if an effect writes without pausing.</p>
+    <p><code>set_hsv</code> and <code>set_rgb</code> follow <code>ws2812.cpp</code> from pimoroni-pico: values over 255 wrap around, a negative hue leaves the LED unchanged, <code>set_rgb</code> with a float raises <code>TypeError</code>, and writes past the end of the strip are reported as warnings. Python runs on Pyodide (CPython), so small differences from MicroPython are possible.</p>
+  </footer>
+</div>
+
+<script type="text/plain" id="src-eff">
+{{EFF_PY}}</script>
+<script type="text/plain" id="src-cfg">
+{{CONFIG_PY}}</script>
+<script type="text/plain" id="src-label-default">{{SRC_LABEL}}</script>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  // Firmware gamma table (pimoroni-pico common/pimoroni_common.hpp, GAMMA_8BIT).
+  const G8 = {{GAMMA_JSON}};
+  const LUT_GAMMA = new Uint8Array(256);
+  const LUT_RAW = new Uint8Array(256);
+  for (let x = 0; x < 256; x++) {
+    LUT_RAW[x] = x;
+    // LED light is linear in G8[x]; the screen applies ~2.2 gamma, so undo it.
+    LUT_GAMMA[x] = Math.round(255 * Math.pow(G8[x] / 255, 1 / 2.2));
+  }
+
+  const store = {
+    get(k, d) {
+      try { const v = localStorage.getItem("plasmafx.v1." + k); return v == null ? d : JSON.parse(v); }
+      catch (e) { return d; }
+    },
+    set(k, v) {
+      try { localStorage.setItem("plasmafx.v1." + k, JSON.stringify(v)); } catch (e) { /* storage off */ }
+    },
+  };
+
+  const fmt = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : "–");
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+  // ------------------------------------------------------------------ sources
+  const stripLead = (s) => s.replace(/^\r?\n/, "");
+  let effSrc = stripLead($("src-eff").textContent);
+  let cfgSrc = stripLead($("src-cfg").textContent);
+  let srcLabel = $("src-label-default").textContent.trim();
+
+  const CUSTOM = "__custom";
+  const CUSTOM_TEMPLATE = `# Custom effect. It gets the hsv_values list and the led_strip.
+# Everything from eff.py and configuration.py is available:
+# NUM_LEDS, TIMEOUT_DURATION, ORIENTATION, set_hsv_env(), hsv_to_rgb(), time, math…
+def effect_custom(hsv_values, led_strip):
+    start = time.ticks_ms()
+    t = 0
+    while time.ticks_diff(time.ticks_ms(), start) < TIMEOUT_DURATION:
+        for i in range(NUM_LEDS):
+            hue = (i / NUM_LEDS + t * 0.004) % 1.0
+            v = 0.5 + 0.5 * math.sin(i * 0.35 - t * 0.12)
+            set_hsv_env(i, hue, 1.0, v, led_strip)
+        t += 1
+        time.sleep(0.02)
+    return hsv_values
+`;
+
+  function cleanLabel(s) {
+    s = s.replace(/^Effect\s*\d+\s*[:\-–]\s*/i, "").trim();
+    const colon = s.indexOf(":");
+    if (colon > 6 && colon < 42) s = s.slice(0, colon);
+    s = s.replace(/[.\s]+$/, "").replace(/\s+effect$/i, "");
+    if (s.length > 46) s = s.slice(0, 44).replace(/[\s,;(]+\S*$/, "") + "…";
+    return s;
+  }
+
+  function parseEffects(src) {
+    const lines = src.split("\n");
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^def (effect_(\d+))\s*\(/.exec(lines[i]);
+      if (!m) continue;
+      let j = i + 1;
+      while (j < lines.length && (lines[j].trim() === "" || /^[\s#]/.test(lines[j]))) j++;
+      let end = j;
+      while (end > i + 1 && (lines[end - 1].trim() === "" || /^#/.test(lines[end - 1]))) end--;
+      const code = lines.slice(i, end).join("\n") + "\n";
+      let doc = "";
+      let li = i + 1;
+      while (li < i + 4 && li < lines.length && lines[li].trim() === "") li++;
+      const l1 = (lines[li] || "").trim();
+      const dm = /^(?:"""|''')\s*(.*?)\s*(?:"""|''')?$/.exec(l1);
+      if (dm) doc = dm[1] || (lines[li + 1] || "").trim();
+      else if (/^#\s*\S/.test(l1)) doc = l1.replace(/^#\s*/, "");
+      if (!doc) {
+        const prev = (lines[i - 1] || "").trim();
+        if (/^#\s*\S/.test(prev)) doc = prev.replace(/^#\s*/, "");
+      }
+      out.push({ fn: m[1], num: +m[2], code, label: cleanLabel(doc) || m[1], line: i + 1 });
+    }
+    out.sort((a, b) => a.num - b.num);
+    return out;
+  }
+
+  function cfgDefault(re, d) {
+    const m = re.exec(cfgSrc);
+    return m ? m[1] : d;
+  }
+
+  let effects = parseEffects(effSrc);
+  const effByFn = () => Object.fromEntries(effects.map((e) => [e.fn, e]));
+
+  // ----------------------------------------------------------------- settings
+  const defaults = {
+    effect: "effect_15",
+    num_leds: +cfgDefault(/^NUM_LEDS\s*=\s*(\d+)/m, 66),
+    orientation: cfgDefault(/^ORIENTATION\s*=\s*["'](\w+)["']/m, "BOTTOM"),
+    timeout: 15,
+    brightness: +cfgDefault(/^BRIGHTNESS\s*=\s*([\d.]+)/m, 0.8),
+    layout: "tree",
+    colormap: "rg",
+    model: "ledstrip",
+    seed: 1,
+    cost: 35,
+    fps: 60,
+    extra: 30,
+    gamma: true,
+    speed: 1,
+    loop: true,
+  };
+  const settings = Object.assign({}, defaults, store.get("settings", {}));
+  const saveSettings = () => store.set("settings", settings);
+  let edits = store.get("edits", {});
+  if (typeof edits !== "object" || !edits) edits = {};
+
+  // ------------------------------------------------------------------- status
+  function setStatus(state, text) {
+    $("status").dataset.state = state;
+    $("status-text").textContent = text;
+  }
+  function stageNote(text, isErr) {
+    const n = $("stage-note");
+    n.hidden = !text;
+    n.textContent = text || "";
+    n.classList.toggle("err", !!isErr);
+  }
+
+  // ---------------------------------------------------------------------- log
+  const logEl = $("log");
+  function log(text, kind = "out") {
+    const span = document.createElement("span");
+    span.className = kind;
+    span.textContent = text + "\n";
+    logEl.appendChild(span);
+    while (logEl.childNodes.length > 500) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  $("clear-log").addEventListener("click", () => { logEl.textContent = ""; });
+
+  // ------------------------------------------------------------------- engine
+  const INDEX_URL = location.protocol === "file:"
+    ? "https://cdn.jsdelivr.net/npm/pyodide@0.26.4/"
+    : new URL("py/", location.href).href;
+  const ENGINE_URL = location.protocol === "file:" ? null : new URL("engine.js", location.href).href;
+
+  const Eng = { w: null, inline: null, mode: "", ready: false, busy: false, pending: false, runId: 0, watchdog: 0, fatal: false };
+
+  function onEngine(m) {
+    switch (m.type) {
+      case "status":
+        setStatus("loading", m.text);
+        break;
+      case "ready":
+        Eng.ready = true;
+        setStatus("ready", "Python " + m.version + " ready");
+        stageNote("");
+        if (Eng.pending) { Eng.pending = false; doRun(); }
+        break;
+      case "fatal":
+        Eng.fatal = true;
+        setStatus("error", "Python failed to start");
+        stageNote("Python failed to start in this browser.\n" + m.text, true);
+        log(m.text, "err");
+        break;
+      case "log":
+        if (m.id === Eng.runId) log(m.text, m.kind === "err" ? "err" : m.kind === "warn" ? "warn" : "out");
+        break;
+      case "frames":
+        if (m.id === Eng.runId) addFrames(m);
+        break;
+      case "done":
+        if (m.id !== Eng.runId) break;
+        clearTimeout(Eng.watchdog);
+        Eng.busy = false;
+        finishRun(m);
+        if (Eng.pending) { Eng.pending = false; doRun(); }
+        break;
+    }
+  }
+
+  function loadScript(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = res;
+      s.onerror = () => rej(new Error("Failed to load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function startInline() {
+    Eng.mode = "inline";
+    const engineSrc = ENGINE_URL || "engine.js";
+    loadScript(engineSrc)
+      .then(() => loadScript(INDEX_URL + "pyodide.js"))
+      .then(() => {
+        Eng.inline = self.FXEngineCreate((m) => onEngine(m), INDEX_URL);
+        Eng.inline({ type: "init" });
+      })
+      .catch((e) => onEngine({ type: "fatal", text: String(e.message || e) }));
+  }
+
+  function wasmAllowed() {
+    try {
+      new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  let loadTimer = 0;
+  function engineStart() {
+    Eng.ready = false;
+    Eng.busy = false;
+    if (typeof WebAssembly === "undefined" || !wasmAllowed()) {
+      onEngine({ type: "fatal", text: "The environment this page is open in doesn't allow WebAssembly, and Python can't run in the browser without it." });
+      return;
+    }
+    clearTimeout(loadTimer);
+    loadTimer = setTimeout(() => {
+      if (!Eng.ready && !Eng.fatal) {
+        stageNote("Python is taking unusually long to load. If nothing changes, try reloading the page; on a slow connection the first 14 MB download takes longer.", false);
+      }
+    }, 45000);
+    setStatus("loading", "Loading Python…");
+    if (!ENGINE_URL || typeof Worker === "undefined") { startInline(); return; }
+    let w;
+    try {
+      w = new Worker(ENGINE_URL);
+    } catch (e) {
+      startInline();
+      return;
+    }
+    Eng.w = w;
+    Eng.mode = "worker";
+    w.onmessage = (e) => onEngine(e.data);
+    w.onerror = (e) => {
+      if (!Eng.ready) {
+        e.preventDefault && e.preventDefault();
+        w.terminate();
+        Eng.w = null;
+        startInline();
+      } else {
+        log("Simulator error: " + (e.message || e), "err");
+      }
+    };
+    w.postMessage({ type: "init", indexURL: INDEX_URL });
+  }
+
+  function engineRestart(reason) {
+    if (Eng.mode !== "worker" || !Eng.w) return false;
+    Eng.w.terminate();
+    Eng.w = null;
+    if (reason) log(reason, "warn");
+    engineStart();
+    return true;
+  }
+
+  function engineSend(msg) {
+    if (Eng.mode === "worker") Eng.w.postMessage(msg);
+    else setTimeout(() => Eng.inline(msg), 40);
+  }
+
+  // --------------------------------------------------------------- run setup
+  const codeEl = $("code");
+  let currentKey = settings.effect;
+
+  function currentFnName() { return currentKey === CUSTOM ? "" : currentKey; }
+
+  function buildOpts() {
+    const timeoutMs = clamp(+settings.timeout || 15, 1, 120) * 1000;
+    return {
+      num_leds: clamp(Math.round(+settings.num_leds || 66), 1, 1000),
+      orientation: settings.orientation === "TOP" ? "TOP" : "BOTTOM",
+      timeout_ms: timeoutMs,
+      brightness: clamp(+settings.brightness || 1, 0.01, 1),
+      strip_model: settings.model === "raw" ? "raw" : "ledstrip",
+      seed: Math.round(+settings.seed || 0),
+      call_cost_us: clamp(+settings.cost, 0, 2000),
+      fps: clamp(+settings.fps || 60, 10, 240),
+      max_ms: timeoutMs + clamp(+settings.extra || 0, 0, 120) * 1000,
+      max_frames: 40000,
+      wall_limit_ms: 25000,
+    };
+  }
+
+  function requestRun() {
+    if (Eng.fatal) return;
+    if (!Eng.ready) { Eng.pending = true; return; }
+    if (Eng.busy) {
+      Eng.pending = true;
+      if (Eng.mode === "worker") engineRestart("Previous run interrupted.");
+      return;
+    }
+    doRun();
+  }
+
+  function doRun() {
+    const id = ++Eng.runId;
+    Eng.busy = true;
+    const opts = buildOpts();
+    resetPlayback(opts);
+    markErrorLine(null);
+    const label = currentKey === CUSTOM ? "custom code" : currentKey;
+    log("— " + label + " · " + opts.num_leds + " LED · " + fmt(opts.timeout_ms / 1000, 0) + " s —", "sep");
+    setStatus("running", "Simulating…");
+    engineSend({
+      type: "run", id,
+      effSrc, cfgSrc,
+      code: codeEl.value,
+      fnName: currentFnName(),
+      opts,
+    });
+    clearTimeout(Eng.watchdog);
+    if (Eng.mode === "worker") {
+      Eng.watchdog = setTimeout(() => {
+        if (Eng.busy && Eng.runId === id) {
+          P.done = true;
+          P.endT = lastFrameT();
+          setStatus("error", "Effect is stuck");
+          log("The effect ran too long without calling time.* or led_strip.* (infinite loop?). Python was restarted.", "err");
+          engineRestart();
+        }
+      }, 40000);
+    }
+  }
+
+  // ----------------------------------------------------------------- playback
+  const P = { n: settings.num_leds, frames: [], done: false, endT: 0, expect: 15000, clock: 0, playing: true, error: false };
+
+  function lastFrameT() { return P.frames.length ? P.frames[P.frames.length - 1].t : 0; }
+
+  function resetPlayback(opts) {
+    P.n = opts.num_leds;
+    P.frames = [];
+    P.done = false;
+    P.endT = 0;
+    P.expect = opts.timeout_ms;
+    P.clock = 0;
+    P.error = false;
+    setPlaying(true);
+    L.dirty = true;
+    computeLayout();
+    TL.needsRebuild = true;
+    $("stats").textContent = "";
+  }
+
+  function addFrames(m) {
+    const n3 = m.n * 3;
+    if (m.n !== P.n) { P.n = m.n; computeLayout(); }
+    for (let k = 0; k < m.t.length; k++) {
+      P.frames.push({ t: m.t[k], d: m.b.subarray(k * n3, (k + 1) * n3) });
+    }
+    scheduleTimeline();
+  }
+
+  const REASONS = {
+    time: (o) => "The effect didn't finish; the simulation stopped it after " + fmt(o.max_ms / 1000, 0) + " s of virtual time.",
+    frames: () => "Reached the limit of 40,000 frames, simulation stopped.",
+    wall: () => "Computation took longer than 25 s, simulation stopped.",
+    reset: () => "The code called machine.reset().",
+  };
+
+  function finishRun(m) {
+    P.done = true;
+    P.endT = Math.max(m.endT || 0, lastFrameT());
+    TL.needsRebuild = true;
+    scheduleTimeline();
+    const parts = [];
+    parts.push(m.nframes + " frames");
+    parts.push(fmt(P.endT / 1000, 1) + " s of virtual time");
+    if (P.endT > 0 && m.nframes > 1) parts.push("strip changes " + fmt(m.nframes / (P.endT / 1000), 0) + "× per s");
+    parts.push("computed in " + fmt(m.wallMs / 1000, 2) + " s");
+    const stats = $("stats");
+    stats.textContent = parts.join(" · ");
+    if (m.reason === "error") {
+      P.error = true;
+      log(m.error || "Unknown error", "err");
+      markErrorLine(m.errorLine);
+      setStatus("error", m.errorLine ? "Error in code, line " + m.errorLine : "Error in code");
+    } else {
+      const why = REASONS[m.reason] ? REASONS[m.reason](buildOpts()) : "";
+      if (why) {
+        const w = document.createElement("span");
+        w.className = "warn";
+        w.textContent = " · " + why;
+        stats.appendChild(w);
+        log(why, "warn");
+      }
+      setStatus("ready", "Done");
+    }
+  }
+
+  function frameAt(t) {
+    const f = P.frames;
+    let lo = 0, hi = f.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (f[mid].t <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return ans;
+  }
+
+  const ICON_PLAY = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/></svg>';
+  function setPlaying(on) {
+    P.playing = on;
+    const b = $("play");
+    b.innerHTML = on ? ICON_PAUSE : ICON_PLAY;
+    b.setAttribute("aria-label", on ? "Pause" : "Play");
+    b.title = on ? "Pause (Space)" : "Play (Space)";
+  }
+  $("play").addEventListener("click", () => {
+    if (!P.playing && P.done && P.clock >= P.endT - 1) P.clock = 0;
+    setPlaying(!P.playing);
+  });
+  $("restart").addEventListener("click", () => { P.clock = 0; setPlaying(true); });
+
+  function segInit(id, key, parse, after) {
+    const el = $(id);
+    const sync = () => el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(parse(b.dataset.v) === settings[key])));
+    el.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      settings[key] = parse(b.dataset.v);
+      saveSettings();
+      sync();
+      after && after();
+    });
+    sync();
+  }
+  segInit("speed", "speed", Number);
+  segInit("layout", "layout", String, () => { computeLayout(); L.dirty = true; });
+
+  const loopEl = $("loop");
+  loopEl.checked = !!settings.loop;
+  loopEl.addEventListener("change", () => { settings.loop = loopEl.checked; saveSettings(); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && (e.target === document.body || e.target === $("timeline") || e.target === $("leds"))) {
+      e.preventDefault();
+      $("play").click();
+    }
+  });
+
+  // ------------------------------------------------------------------ drawing
+  const stage = $("stage");
+  const cv = $("leds");
+  const ctx = cv.getContext("2d");
+  const css = getComputedStyle(document.documentElement);
+  const COL = {
+    body: css.getPropertyValue("--led-body").trim() || "#1e232b",
+    wire: css.getPropertyValue("--wire").trim() || "rgba(150,160,175,.16)",
+    faint: css.getPropertyValue("--faint").trim() || "#626b78",
+    gold: css.getPropertyValue("--gold").trim() || "#d9a548",
+    stage: css.getPropertyValue("--stage").trim() || "#06080a",
+    line: css.getPropertyValue("--line").trim() || "#29303a",
+  };
+  const MONO = '10px "IBM Plex Mono", ui-monospace, monospace';
+  const L = { w: 0, h: 0, dpr: 1, pos: [], order: [], labels: [], dirty: true, hover: -1, drawnIdx: -2, segBreaks: null };
+
+  function computeLayout() {
+    const n = Math.max(1, P.n || 1);
+    const W = Math.max(200, stage.clientWidth);
+    const layout = settings.layout;
+    const bottomFirst = settings.orientation !== "TOP";
+    const pos = new Array(n);
+    const labels = [];
+    let H;
+    if (layout === "column") {
+      H = Math.round(clamp(Math.min(window.innerHeight * 0.62, 620), 280, 620));
+      const pad = 26;
+      const pitch = n > 1 ? (H - pad * 2) / (n - 1) : 0;
+      const r = clamp(pitch * 0.34, 1.6, 7);
+      for (let i = 0; i < n; i++) {
+        const y = bottomFirst ? H - pad - i * pitch : pad + i * pitch;
+        pos[i] = { x: W / 2, y, r, z: 1 };
+      }
+      const step = n > 120 ? 20 : 10;
+      for (let i = 0; i < n; i += step) labels.push({ x: W / 2 - 22, y: pos[i].y + 3, text: String(i), align: "right" });
+    } else if (layout === "tree") {
+      H = Math.round(clamp(Math.min(W * 1.02, window.innerHeight * 0.66), 300, 660));
+      const R0 = Math.min(W * 0.34, (H - 64) * 0.4);
+      const baseY = H - 30 - R0 * 0.2, topY = 30;
+      const turns = Math.max(2.5, n / 22);
+      for (let i = 0; i < n; i++) {
+        let u = n > 1 ? i / (n - 1) : 0;
+        if (!bottomFirst) u = 1 - u;
+        const theta = u * turns * Math.PI * 2;
+        const rad = R0 * (1 - u * 0.9);
+        const z = Math.cos(theta);
+        const ledR = clamp((n <= 120 ? 6 : 5) - u * 1.8, 2.4, 6.5) * (0.74 + 0.26 * (z + 1) / 2);
+        pos[i] = { x: W / 2 + rad * Math.sin(theta), y: baseY - u * (baseY - topY) + rad * 0.2 * z, r: ledR, z };
+      }
+      labels.push({ x: pos[0].x, y: pos[0].y + (bottomFirst ? 20 : -14), text: "0", align: "center" });
+      if (n > 1) labels.push({ x: pos[n - 1].x, y: pos[n - 1].y + (bottomFirst ? -14 : 20), text: String(n - 1), align: "center" });
+    } else {
+      const padX = 22, padY = 24;
+      const avail = W - padX * 2;
+      let cols = Math.max(1, Math.floor(avail / 15));
+      let pitch;
+      if (n <= cols) { cols = n; pitch = Math.min(26, avail / n); }
+      else pitch = avail / cols;
+      const rows = Math.ceil(n / cols);
+      const rowGap = Math.max(pitch * 2.1, 34);
+      H = Math.round(padY * 2 + (rows - 1) * rowGap + pitch + 12);
+      const x0 = (W - (cols - 1) * pitch) / 2;
+      const r = clamp(pitch * 0.3, 2, 7);
+      for (let i = 0; i < n; i++) {
+        const row = Math.floor(i / cols), col = i % cols;
+        pos[i] = { x: x0 + col * pitch, y: padY + pitch / 2 + row * rowGap, r, z: 1 };
+      }
+      const step = cols >= 40 ? 10 : 5;
+      for (let i = 0; i < n; i += step) labels.push({ x: pos[i].x, y: pos[i].y + r + 16, text: String(i), align: "center" });
+    }
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.style.height = H + "px";
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    const order = pos.map((_, i) => i).sort((a, b) => pos[a].z - pos[b].z);
+    Object.assign(L, { w: W, h: H, dpr, pos, order, labels, layout, dirty: true });
+    if (L.hover >= n) L.hover = -1;
+  }
+
+  function lut() { return settings.gamma ? LUT_GAMMA : LUT_RAW; }
+  // Which code channel ends up in the displayed R, G and B.
+  const PERMS = { none: [0, 1, 2], rg: [1, 0, 2], rb: [2, 1, 0], gb: [0, 2, 1], rot1: [2, 0, 1], rot2: [1, 2, 0] };
+  function perm() { return PERMS[settings.colormap] || PERMS.none; }
+
+  function draw(frame) {
+    const { w, h, dpr, pos, order, labels, layout } = L;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.clearRect(0, 0, w, h);
+
+    // wire
+    ctx.strokeStyle = COL.wire;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < pos.length; i++) {
+      const p = pos[i];
+      if (i === 0 || (layout === "strip" && p.y !== pos[i - 1].y)) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // LED bodies
+    ctx.fillStyle = COL.body;
+    for (const i of order) {
+      const p = pos[i];
+      ctx.globalAlpha = p.z < 0 ? 0.55 : 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const d = frame ? frame.d : null;
+    const T = lut();
+    const [pr, pg, pb] = perm();
+    if (d) {
+      // glow
+      ctx.globalCompositeOperation = "lighter";
+      for (const i of order) {
+        const k = i * 3;
+        if (k + 2 >= d.length) continue;
+        const r = T[d[k + pr]], g = T[d[k + pg]], b = T[d[k + pb]];
+        const m = Math.max(r, g, b) / 255;
+        if (m < 0.012) continue;
+        const p = pos[i];
+        const dim = p.z < 0 ? 0.5 : 1;
+        const R = p.r * (2.6 + 2.4 * m);
+        const gr = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, R);
+        gr.addColorStop(0, `rgba(${r},${g},${b},${0.55 * dim})`);
+        gr.addColorStop(0.35, `rgba(${r},${g},${b},${0.2 * dim})`);
+        gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+        ctx.fillStyle = gr;
+        ctx.fillRect(p.x - R, p.y - R, R * 2, R * 2);
+      }
+      // cores
+      ctx.globalCompositeOperation = "source-over";
+      for (const i of order) {
+        const k = i * 3;
+        if (k + 2 >= d.length) continue;
+        let r = T[d[k + pr]], g = T[d[k + pg]], b = T[d[k + pb]];
+        const m = Math.max(r, g, b) / 255;
+        if (m < 0.012) continue;
+        const p = pos[i];
+        const hot = 0.4 * m * m;
+        r = Math.round(r + (255 - r) * hot);
+        g = Math.round(g + (255 - g) * hot);
+        b = Math.round(b + (255 - b) * hot);
+        ctx.globalAlpha = p.z < 0 ? 0.6 : 1;
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * 0.86, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // labels
+    ctx.font = MONO;
+    ctx.fillStyle = COL.faint;
+    for (const lb of labels) {
+      ctx.textAlign = lb.align;
+      ctx.fillText(lb.text, lb.x, lb.y);
+    }
+
+    // hover ring
+    if (L.hover >= 0 && L.hover < pos.length) {
+      const p = pos[L.hover];
+      ctx.strokeStyle = COL.gold;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(p.r + 4, 6), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // ------------------------------------------------------------------ inspect
+  const inspectEl = $("inspect");
+  function updateInspector(frame) {
+    if (L.hover < 0) return;
+    const i = L.hover;
+    const n = L.pos.length;
+    const env = settings.orientation === "TOP" ? n - 1 - i : i;
+    const d = frame ? frame.d : null;
+    let r = 0, g = 0, b = 0;
+    if (d && i * 3 + 2 < d.length) { r = d[i * 3]; g = d[i * 3 + 1]; b = d[i * 3 + 2]; }
+    const T = lut();
+    const pp = perm();
+    const raw = [r, g, b];
+    const led = [G8[raw[pp[0]]], G8[raw[pp[1]]], G8[raw[pp[2]]]];
+    inspectEl.textContent = "";
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = `rgb(${T[raw[pp[0]]]},${T[raw[pp[1]]]},${T[raw[pp[2]]]})`;
+    const a = document.createElement("span");
+    a.innerHTML = "<b></b>";
+    a.firstChild.textContent = "LED " + i;
+    a.appendChild(document.createTextNode(" · " + (env === i ? "from bottom " + env : "from bottom " + env + " (env)")));
+    const c = document.createElement("span");
+    c.className = "mono";
+    c.textContent = `in code (${r}, ${g}, ${b}) → LED lights R ${led[0]} G ${led[1]} B ${led[2]}`;
+    inspectEl.append(sw, a, c);
+  }
+
+  function pickLed(ev) {
+    const rect = cv.getBoundingClientRect();
+    const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < L.pos.length; i++) {
+      const p = L.pos[i];
+      const dd = Math.hypot(p.x - x, p.y - y) - p.z * 1.5;
+      if (dd < bestD) { bestD = dd; best = i; }
+    }
+    const lim = best >= 0 ? Math.max(L.pos[best].r * 2.4, 9) : 0;
+    return bestD <= lim ? best : -1;
+  }
+  cv.addEventListener("pointermove", (ev) => {
+    const i = pickLed(ev);
+    if (i !== L.hover) {
+      L.hover = i;
+      L.dirty = true;
+      if (i < 0) inspectEl.textContent = "Hover over an LED to see its index and value.";
+    }
+  });
+  cv.addEventListener("pointerleave", () => {
+    L.hover = -1;
+    L.dirty = true;
+    inspectEl.textContent = "Hover over an LED to see its index and value.";
+  });
+
+  // ----------------------------------------------------------------- timeline
+  const tl = $("timeline");
+  const tctx = tl.getContext("2d");
+  const off = document.createElement("canvas");
+  const octx = off.getContext("2d");
+  const TL = { span: 1, needsRebuild: true, timer: 0, drawnClock: -1, w: 0, h: 0, dpr: 1, scrubbing: false };
+  const AXIS = 16;
+
+  function scheduleTimeline() {
+    if (TL.timer) return;
+    TL.timer = setTimeout(() => { TL.timer = 0; TL.needsRebuild = true; }, 180);
+  }
+
+  function rebuildTimeline() {
+    TL.needsRebuild = false;
+    const W = Math.max(100, tl.clientWidth);
+    const cols = Math.max(60, Math.min(900, Math.round(W)));
+    const n = Math.max(1, P.n);
+    const lt = lastFrameT();
+    const span = P.done ? Math.max(P.endT, 1) : Math.max(P.expect, lt, 1);
+    off.width = cols;
+    off.height = n;
+    const img = octx.createImageData(cols, n);
+    const data = img.data;
+    const T = lut();
+    const [pr, pg, pb] = perm();
+    for (let c = 0; c < cols; c++) {
+      const t = ((c + 0.5) / cols) * span;
+      if (!P.done && t > lt) break;
+      const fi = frameAt(t);
+      if (fi < 0) continue;
+      const d = P.frames[fi].d;
+      for (let i = 0; i < n && i * 3 + 2 < d.length; i++) {
+        const o = ((n - 1 - i) * cols + c) * 4;
+        data[o] = T[d[i * 3 + pr]];
+        data[o + 1] = T[d[i * 3 + pg]];
+        data[o + 2] = T[d[i * 3 + pb]];
+        data[o + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    TL.span = span;
+    TL.drawnClock = -1;
+  }
+
+  function niceStep(sec) {
+    for (const s of [0.5, 1, 2, 5, 10, 15, 30, 60]) if (sec / s <= 8) return s;
+    return 120;
+  }
+
+  function drawTimeline() {
+    const W = tl.clientWidth, H = tl.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (TL.w !== W || TL.h !== H || TL.dpr !== dpr) {
+      tl.width = Math.round(W * dpr);
+      tl.height = Math.round(H * dpr);
+      TL.w = W; TL.h = H; TL.dpr = dpr;
+    }
+    tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tctx.clearRect(0, 0, W, H);
+    const ih = H - AXIS;
+    tctx.imageSmoothingEnabled = false;
+    if (off.width && off.height) tctx.drawImage(off, 0, 0, off.width, off.height, 0, 0, W, ih);
+
+    // not yet computed part
+    const lt = lastFrameT();
+    if (!P.done) {
+      const x0 = clamp((lt / TL.span) * W, 0, W);
+      tctx.fillStyle = "rgba(255,255,255,0.03)";
+      tctx.fillRect(x0, 0, W - x0, ih);
+    }
+
+    // axis
+    tctx.fillStyle = COL.line;
+    tctx.fillRect(0, ih, W, 1);
+    tctx.font = MONO;
+    tctx.fillStyle = COL.faint;
+    const spanS = TL.span / 1000;
+    const step = niceStep(spanS);
+    for (let s = 0; s <= spanS + 1e-6; s += step) {
+      const x = (s / spanS) * W;
+      tctx.fillRect(Math.round(x), ih, 1, 4);
+      tctx.textAlign = s === 0 ? "left" : x > W - 20 ? "right" : "center";
+      tctx.fillText(fmt(s, step < 1 ? 1 : 0) + " s", clamp(x, 2, W - 2), H - 3);
+    }
+    // timeout marker
+    if (P.expect < TL.span) {
+      const x = (P.expect / TL.span) * W;
+      tctx.strokeStyle = "rgba(232,187,98,0.55)";
+      tctx.setLineDash([3, 3]);
+      tctx.beginPath();
+      tctx.moveTo(x + 0.5, 0);
+      tctx.lineTo(x + 0.5, ih);
+      tctx.stroke();
+      tctx.setLineDash([]);
+    }
+    // playhead
+    const px = clamp((P.clock / TL.span) * W, 0, W - 1);
+    tctx.fillStyle = COL.gold;
+    tctx.fillRect(Math.round(px) - 1, 0, 2, ih);
+    tctx.beginPath();
+    tctx.moveTo(px - 5, 0);
+    tctx.lineTo(px + 5, 0);
+    tctx.lineTo(px, 6);
+    tctx.fill();
+  }
+
+  function seekFromEvent(ev) {
+    const rect = tl.getBoundingClientRect();
+    const x = clamp(ev.clientX - rect.left, 0, rect.width);
+    const avail = P.done ? P.endT : lastFrameT();
+    P.clock = clamp((x / rect.width) * TL.span, 0, avail);
+  }
+  tl.addEventListener("pointerdown", (ev) => {
+    TL.scrubbing = true;
+    tl.setPointerCapture(ev.pointerId);
+    seekFromEvent(ev);
+  });
+  tl.addEventListener("pointermove", (ev) => { if (TL.scrubbing) seekFromEvent(ev); });
+  tl.addEventListener("pointerup", () => { TL.scrubbing = false; });
+  tl.addEventListener("pointercancel", () => { TL.scrubbing = false; });
+
+  // --------------------------------------------------------------- main loop
+  const tNow = $("t-now"), tEnd = $("t-end");
+  let prevTs = 0, lastClockTxt = "", lastEndTxt = "";
+  function tick(ts) {
+    const dt = prevTs ? Math.min(100, ts - prevTs) : 0;
+    prevTs = ts;
+    if (P.playing && P.frames.length && !TL.scrubbing) {
+      P.clock += dt * settings.speed;
+      const avail = P.done ? P.endT : lastFrameT();
+      if (P.clock > avail) {
+        if (P.done) {
+          if (settings.loop && P.endT > 0) P.clock = 0;
+          else { P.clock = P.endT; setPlaying(false); }
+        } else {
+          P.clock = avail;
+        }
+      }
+    }
+    const idx = frameAt(P.clock);
+    if (idx !== L.drawnIdx || L.dirty) {
+      const fr = idx >= 0 ? P.frames[idx] : null;
+      draw(fr);
+      updateInspector(fr);
+      L.drawnIdx = idx;
+      L.dirty = false;
+    }
+    if (TL.needsRebuild) rebuildTimeline();
+    if (P.clock !== TL.drawnClock) {
+      drawTimeline();
+      TL.drawnClock = P.clock;
+    }
+    const ct = fmt(P.clock / 1000, 2);
+    if (ct !== lastClockTxt) { tNow.textContent = ct; lastClockTxt = ct; }
+    const et = P.done ? fmt(P.endT / 1000, 2) : P.frames.length ? "…" : "–";
+    if (et !== lastEndTxt) { tEnd.textContent = et; lastEndTxt = et; }
+    requestAnimationFrame(tick);
+  }
+
+  new ResizeObserver(() => {
+    computeLayout();
+    L.dirty = true;
+    TL.needsRebuild = true;
+  }).observe(stage);
+
+  // ------------------------------------------------------------------- editor
+  const gutter = $("gutter");
+  let errLine = null;
+  function renderGutter() {
+    const count = codeEl.value.split("\n").length;
+    const frag = document.createDocumentFragment();
+    for (let i = 1; i <= count; i++) {
+      if (i === errLine) {
+        const s = document.createElement("span");
+        s.className = "err";
+        s.textContent = String(i);
+        frag.appendChild(s);
+        frag.appendChild(document.createTextNode("\n"));
+      } else {
+        frag.appendChild(document.createTextNode(i + "\n"));
+      }
+    }
+    gutter.textContent = "";
+    gutter.appendChild(frag);
+    gutter.scrollTop = codeEl.scrollTop;
+  }
+  function markErrorLine(line) {
+    errLine = line || null;
+    renderGutter();
+    if (errLine) {
+      const lh = parseFloat(getComputedStyle(codeEl).lineHeight) || 20;
+      const target = (errLine - 1) * lh - codeEl.clientHeight / 3;
+      codeEl.scrollTop = Math.max(0, target);
+    }
+  }
+  codeEl.addEventListener("scroll", () => { gutter.scrollTop = codeEl.scrollTop; });
+
+  function originalCode(key) {
+    if (key === CUSTOM) return CUSTOM_TEMPLATE;
+    const e = effByFn()[key];
+    return e ? e.code : "";
+  }
+  function updateEditedBadge() {
+    $("edited").hidden = codeEl.value === originalCode(currentKey);
+  }
+  let saveTimer = 0;
+  codeEl.addEventListener("input", () => {
+    if (errLine) errLine = null;
+    renderGutter();
+    updateEditedBadge();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      if (codeEl.value === originalCode(currentKey)) delete edits[currentKey];
+      else edits[currentKey] = codeEl.value;
+      store.set("edits", edits);
+    }, 300);
+  });
+
+  function insertText(s) {
+    codeEl.focus();
+    let ok = false;
+    try { ok = document.execCommand("insertText", false, s); } catch (e) { ok = false; }
+    if (!ok) {
+      codeEl.setRangeText(s, codeEl.selectionStart, codeEl.selectionEnd, "end");
+      codeEl.dispatchEvent(new Event("input"));
+    }
+  }
+  let escaped = false;
+  codeEl.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      requestRun();
+      return;
+    }
+    if (e.key === "Escape") { escaped = true; return; }
+    if (e.key === "Tab" && !escaped && !e.shiftKey) {
+      e.preventDefault();
+      insertText("    ");
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+      const v = codeEl.value;
+      const pos = codeEl.selectionStart;
+      const lineStart = v.lastIndexOf("\n", pos - 1) + 1;
+      const line = v.slice(lineStart, pos);
+      let indent = (/^[ \t]*/.exec(line) || [""])[0];
+      if (/:\s*(#.*)?$/.test(line)) indent += "    ";
+      e.preventDefault();
+      insertText("\n" + indent);
+    }
+    escaped = false;
+  });
+
+  function loadEditor(key) {
+    currentKey = key;
+    const e = effByFn()[key];
+    const code = edits[key] != null ? edits[key] : originalCode(key);
+    codeEl.value = code;
+    codeEl.scrollTop = 0;
+    errLine = null;
+    renderGutter();
+    $("fn-name").textContent = key === CUSTOM ? "custom code" : key;
+    $("fn-where").textContent = e ? "eff.py, line " + e.line : "";
+    updateEditedBadge();
+  }
+
+  $("reset").addEventListener("click", () => {
+    delete edits[currentKey];
+    store.set("edits", edits);
+    loadEditor(currentKey);
+    requestRun();
+  });
+
+  $("copy").addEventListener("click", () => {
+    const btn = $("copy");
+    const done = (t) => { btn.textContent = t; setTimeout(() => { btn.textContent = "Copy"; }, 1600); };
+    const p = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(codeEl.value) : Promise.reject();
+    p.then(() => done("Copied")).catch(() => {
+      codeEl.focus();
+      codeEl.select();
+      done("Selected, press Ctrl+C");
+    });
+  });
+
+  $("run").addEventListener("click", requestRun);
+
+  // ------------------------------------------------------------ effect select
+  const effectSel = $("effect");
+  function fillEffects() {
+    effectSel.textContent = "";
+    for (const e of effects) {
+      const o = document.createElement("option");
+      o.value = e.fn;
+      o.textContent = e.num + " · " + e.label + (edits[e.fn] != null ? "  ✎" : "");
+      effectSel.appendChild(o);
+    }
+    const o = document.createElement("option");
+    o.value = CUSTOM;
+    o.textContent = "Custom code…";
+    effectSel.appendChild(o);
+    if (currentKey !== CUSTOM && !effByFn()[currentKey]) currentKey = effects.length ? effects[0].fn : CUSTOM;
+    effectSel.value = currentKey;
+  }
+  effectSel.addEventListener("change", () => {
+    settings.effect = effectSel.value;
+    saveSettings();
+    loadEditor(effectSel.value);
+    requestRun();
+  });
+
+  // ---------------------------------------------------------------- settings
+  let runTimer = 0;
+  const debouncedRun = () => { clearTimeout(runTimer); runTimer = setTimeout(requestRun, 250); };
+  function bindNumber(id, key) {
+    const el = $(id);
+    el.value = settings[key];
+    el.addEventListener("change", () => {
+      const v = parseFloat(el.value);
+      if (!Number.isFinite(v)) { el.value = settings[key]; return; }
+      settings[key] = v;
+      saveSettings();
+      debouncedRun();
+    });
+  }
+  bindNumber("num-leds", "num_leds");
+  bindNumber("timeout", "timeout");
+  bindNumber("seed", "seed");
+  bindNumber("cost", "cost");
+  bindNumber("fps", "fps");
+  bindNumber("extra", "extra");
+
+  function bindSelect(id, key, rerun) {
+    const el = $(id);
+    el.value = settings[key];
+    el.addEventListener("change", () => {
+      settings[key] = el.value;
+      saveSettings();
+      if (key === "orientation") computeLayout();
+      if (rerun) debouncedRun();
+    });
+  }
+  bindSelect("orientation", "orientation", true);
+  bindSelect("model", "model", true);
+  bindSelect("colormap", "colormap", false);
+  $("colormap").addEventListener("change", () => { L.dirty = true; TL.needsRebuild = true; });
+
+  const br = $("brightness"), brOut = $("bright-out");
+  br.value = settings.brightness;
+  brOut.textContent = fmt(+settings.brightness, 2);
+  br.addEventListener("input", () => { brOut.textContent = fmt(+br.value, 2); });
+  br.addEventListener("change", () => { settings.brightness = +br.value; saveSettings(); debouncedRun(); });
+
+  const gammaEl = $("gamma");
+  gammaEl.checked = !!settings.gamma;
+  gammaEl.addEventListener("change", () => {
+    settings.gamma = gammaEl.checked;
+    saveSettings();
+    L.dirty = true;
+    TL.needsRebuild = true;
+  });
+
+  // ------------------------------------------------------------------- files
+  function setSrcLabel() { $("src-label").textContent = srcLabel; }
+  $("file").addEventListener("change", async (ev) => {
+    const files = Array.from(ev.target.files || []);
+    const loaded = [];
+    for (const f of files) {
+      const text = await f.text();
+      if (/configuration\.py$/i.test(f.name) || (/^NUM_LEDS\s*=/m.test(text) && !/^def effect_\d+/m.test(text))) {
+        cfgSrc = text;
+        loaded.push(f.name + " as configuration.py");
+      } else if (/^def effect_\d+\s*\(/m.test(text) && parseEffects(text).length > 1) {
+        effSrc = text;
+        effects = parseEffects(effSrc);
+        loaded.push(f.name + " (" + effects.length + " effects)");
+      } else {
+        edits[CUSTOM] = text;
+        store.set("edits", edits);
+        currentKey = CUSTOM;
+        loaded.push(f.name + " as custom code");
+      }
+    }
+    ev.target.value = "";
+    if (!loaded.length) return;
+    srcLabel = "Loaded: " + loaded.join(", ");
+    setSrcLabel();
+    fillEffects();
+    effectSel.value = currentKey;
+    settings.effect = currentKey;
+    saveSettings();
+    loadEditor(currentKey);
+    requestRun();
+  });
+
+  // -------------------------------------------------------------------- boot
+  setSrcLabel();
+  fillEffects();
+  loadEditor(currentKey);
+  computeLayout();
+  setPlaying(true);
+  requestAnimationFrame(tick);
+  Eng.pending = true;
+  engineStart();
+})();
+</script>

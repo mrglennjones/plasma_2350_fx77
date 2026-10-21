@@ -67,3 +67,7 @@ Starfield runs until the button is pressed again.
 - Hold BUTTON A on boot for starfield mode
 
 Otherwise enjoy the full FX show.
+
+# 🖥️ Effect simulator
+
+`simulator/` contains a browser-based simulator that runs the effects from `eff.py` on a virtual strip, with a virtual clock and emulation of the Plasma WS2812 firmware. See [simulator/README.md](simulator/README.md).
