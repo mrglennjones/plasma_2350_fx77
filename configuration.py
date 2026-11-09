@@ -17,6 +17,18 @@ BRIGHTNESS = 0.8
 BOOT_MODE = "FX"
 
 # -----------------------------
+# TRANSITIONS
+# -----------------------------
+# How one effect hands over to the next in the FX show.
+# "OVERLAY": the previous effect pauses on its last frame, which holds and then
+#            fades away while the new effect paints over it.
+# "BLEND":   the previous effect's last frame blends smoothly into the new one.
+CROSSFADE_STYLE = "OVERLAY"
+#CROSSFADE_STYLE = "BLEND"
+# Length of the handover in milliseconds (0 = hard cut).
+CROSSFADE_MS = 2500
+
+# -----------------------------
 # ORIENTATION CONTROL
 # -----------------------------
 # "BOTTOM" = 2350W is at the bottom, strip goes up

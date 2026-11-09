@@ -17,6 +17,7 @@ Starfield boot mode
 Start with the cinematic starfield or the FX show (`BOOT_MODE` in `configuration.py`); hold BUTTON A (only supported on 2350W) on reset for the other one.
 
 Continuous FX show with smooth transitions
+Each effect hands over to the next: the previous effect pauses on its last frame and fades away while the new one paints over it (`CROSSFADE_STYLE = "OVERLAY"`), or the two blend smoothly (`"BLEND"`). `CROSSFADE_MS` in `configuration.py` sets the length (default 2500 ms; 0 = hard cut).
 
 Random timing & variation
 
