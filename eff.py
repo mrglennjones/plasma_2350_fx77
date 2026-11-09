@@ -410,8 +410,8 @@ def effect_10(hsv_values, led_strip):
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
 
         # Arrays for blended values in ENVIRONMENT space
+        # (total_weight doubles as the summed brightness of all blobs)
         blended_hue = [0.0] * NUM_LEDS
-        blended_brightness = [0.0] * NUM_LEDS
         total_weight = [0.0] * NUM_LEDS
 
         # Fade previous frame
@@ -440,14 +440,15 @@ def effect_10(hsv_values, led_strip):
                     brightness = max(0, 1.0 - distance)
 
                     blended_hue[env_pos] += blob["hue"] * brightness
-                    blended_brightness[env_pos] += brightness
                     total_weight[env_pos] += brightness
 
         # Apply blended output
         for env_i in range(NUM_LEDS):
             if total_weight[env_i] > 0:
                 final_hue = blended_hue[env_i] / total_weight[env_i]
-                final_brightness = blended_brightness[env_i] / total_weight[env_i]
+                # Summed blob brightness, capped: soft edges, brighter overlaps.
+                # (Dividing by total_weight, as before, always gave 1.0.)
+                final_brightness = min(1.0, total_weight[env_i])
 
                 hsv_values[env_i] = (final_hue, 1.0, final_brightness)
                 set_hsv_env(env_i, final_hue, 1.0, final_brightness, led_strip)
@@ -984,22 +985,33 @@ def effect_19(hsv_values, led_strip):
 def effect_20(hsv_values, led_strip):
     """Temporal Wave Collisions: Interference patterns from waves traveling in opposite directions."""
     wave_count = 5
-    wave_speed = 0.2
-    amplitude = 1.0
+    amplitude = 0.6                       # overlapping waves add up and glow brighter
+    wave_width = max(4, NUM_LEDS // 8)    # half-width of each wave in LEDs
 
-    waves = [{"position": 0, "direction": 1} for _ in range(wave_count)]
+    # Each wave gets its own start, speed and direction. (They all used to
+    # start at 0 with the same speed, so they moved as one wave, and each one
+    # spanned the whole strip, which lit every LED at full brightness.)
+    waves = [
+        {
+            "position": uniform(0, NUM_LEDS - 1),
+            "speed": uniform(0.1, 0.4),
+            "direction": choice([-1, 1]),
+        }
+        for _ in range(wave_count)
+    ]
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
         for wave in waves:
-            wave["position"] += wave_speed * wave["direction"]
-            if wave["position"] >= NUM_LEDS or wave["position"] <= 0:
+            wave["position"] += wave["speed"] * wave["direction"]
+            if wave["position"] >= NUM_LEDS - 1 or wave["position"] <= 0:
                 wave["direction"] *= -1
+                wave["position"] = max(0, min(NUM_LEDS - 1, wave["position"]))
 
         for i in range(NUM_LEDS):
             brightness = sum(
-                amplitude * (1 - abs(i - wave["position"]) / NUM_LEDS) for wave in waves
+                amplitude * max(0, 1 - abs(i - wave["position"]) / wave_width) for wave in waves
             )
             hue = (i % 360) / 360.0
             hsv_values[i] = (hue, 1.0, min(brightness, 1.0))
@@ -1055,9 +1067,12 @@ def effect_22(hsv_values, led_strip):
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Time since the effect started, not since boot: 32-bit floats on
+        # the board lose precision on large uptime values.
+        elapsed_ms = time.ticks_diff(time.ticks_ms(), start_time)
         for i in range(NUM_LEDS):
             # Create a smooth pulsating effect
-            brightness = min_brightness + (max_brightness - min_brightness) * (0.5 + 0.5 * math.sin(time.ticks_ms() * pulse_speed))
+            brightness = min_brightness + (max_brightness - min_brightness) * (0.5 + 0.5 * math.sin(elapsed_ms * pulse_speed))
             hsv_values[i] = (hue_red, 1.0, brightness)
             led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
@@ -1109,7 +1124,7 @@ def effect_23(hsv_values, led_strip):
 
 def effect_24(hsv_values, led_strip):
     """Aurora Borealis: Simulates the dancing lights of the Northern Lights with smooth undulations."""
-    wave_speed = 0.1
+    wave_speed = 1.5            # radians per second (was 0.1 per ms: ~5 rad per frame, looked like flicker)
     color_shift_speed = 0.01
     amplitude = 0.4
     base_hue = 0.5
@@ -1117,10 +1132,12 @@ def effect_24(hsv_values, led_strip):
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Seconds since the effect started, not since boot (32-bit floats)
+        t = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0
         for i in range(NUM_LEDS):
-            hue_variation = math.sin(i * amplitude + time.ticks_ms() * wave_speed) * 0.1
+            hue_variation = math.sin(i * amplitude + t * wave_speed) * 0.1
             hue = (base_hue + hue_variation) % 1.0
-            brightness = (1 + math.sin(i * amplitude - time.ticks_ms() * wave_speed)) / 2
+            brightness = (1 + math.sin(i * amplitude - t * wave_speed)) / 2
             hsv_values[i] = (hue, 0.8, brightness)
             led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
@@ -1170,21 +1187,24 @@ def effect_25(hsv_values, led_strip):
 
 def effect_26(hsv_values, led_strip):
     """Ethereal Vortex: A swirling vortex effect, with colors spiraling inwards and outwards."""
-    vortex_speed = 50
+    vortex_speed = 1.2          # radians per second (was 50 per ms: random every frame)
     hue_variation = 0.3
     spiral_tightness = 0.05
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Seconds since the effect started, not since boot: on the board's
+        # 32-bit floats the uptime-based angle collapsed to one colour.
+        t = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0
         for i in range(NUM_LEDS):
-            angle = (i * spiral_tightness + time.ticks_ms() * vortex_speed) % (2 * math.pi)
+            angle = (i * spiral_tightness + t * vortex_speed) % (2 * math.pi)
             hue = (0.5 + math.sin(angle) * hue_variation) % 1.0
             brightness = (1 + math.cos(angle)) / 2
             hsv_values[i] = (hue, 1.0, brightness)
             led_strip.set_hsv(i, hsv_values[i][0], hsv_values[i][1], hsv_values[i][2])
 
-        time.sleep(0.6)
+        time.sleep(0.03)   # was 0.6 s: too slow a frame rate for a smooth swirl
 
     return hsv_values
 
@@ -2870,21 +2890,25 @@ def effect_62(hsv_values, led_strip):
 
 def effect_63(hsv_values, led_strip):
     """Pulsating Red and White effect with smooth transitions and breathing brightness."""
-    pulse_speed = 0.05  # Speed of the pulsing effect
+    pulse_speed = 1.5   # radians per second: one breath about every 4 s
+                        # (was 0.05 per s from boot: a 2-minute cycle that
+                        # could leave the strip dark for a whole run)
+    min_brightness = 0.15
     move_speed = 0.1    # Speed at which the colors move across the strip
 
     start_time = time.ticks_ms()
 
     while time.ticks_diff(time.ticks_ms(), start_time) < TIMEOUT_DURATION:
+        # Seconds since the effect started; starts at full brightness
+        elapsed = time.ticks_diff(time.ticks_ms(), start_time) / 1000.0
+        brightness = min_brightness + (1 - min_brightness) * (1 + math.cos(elapsed * pulse_speed)) / 2
+
         for t in range(NUM_LEDS):
             # Alternate between red and white based on position
             if t % 2 == 0:
                 hue = 0.33  # Red
             else:
                 hue = 0.0  # White with lower saturation
-
-            # Pulsating brightness
-            brightness = (1 + math.sin(time.ticks_ms() * pulse_speed / 1000)) / 2
 
             # Set HSV values, with saturation adjusted for white
             if hue == 0.0 and t % 2 != 0:

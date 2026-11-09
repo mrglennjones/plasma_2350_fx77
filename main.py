@@ -7,6 +7,9 @@ from random import randrange, uniform, random, choice
 import eff
 from eff import *
 from configuration import *
+import configuration
+# older configuration.py files have no BOOT_MODE: default to the FX show
+BOOT_MODE = getattr(configuration, "BOOT_MODE", "FX")
 
 import plasma
 from os import uname
@@ -48,11 +51,14 @@ class LedStrip(plasma.WS2812):
         self.brightness -= step
 
 
-# Set your led strip as R → G → B, order:
+# Colour order: the effects are tuned for a strip that swaps red and green,
+# so use the strip's real order with R and G swapped.
+# Run rgb_test.py to find your strip's order. RGB strip -> COLOR_ORDER_GRB (below);
+# BGR strip -> COLOR_ORDER_BRG. Check: effect 70 should show red and white bars.
 led_strip = LedStrip(
     NUM_LEDS,
     brightness=BRIGHTNESS,
-    color_order=plasma.COLOR_ORDER_BRG
+    color_order=plasma.COLOR_ORDER_GRB
 )
 led_strip.start()
 
@@ -442,16 +448,21 @@ def choose_boot_mode():
     BOOT_WINDOW_MS = 1200
     start = time.ticks_ms()
 
-    print("Boot: hold BUTTON A for STARFIELD; release for FX SHOW")
+    # BOOT_MODE in configuration.py picks the default; holding BUTTON A at
+    # boot starts the other mode instead.
+    default = "starfield" if str(BOOT_MODE).strip().upper() == "STARFIELD" else "fx"
+    other = "starfield" if default == "fx" else "fx"
+    print("Boot: default", default.upper(), "(BOOT_MODE); hold BUTTON A for", other.upper())
 
     while time.ticks_diff(time.ticks_ms(), start) < BOOT_WINDOW_MS:
         if button_pressed():
-            print("Boot: BUTTON A detected -> STARFIELD MODE")
-            return "starfield"
+            print("Boot: BUTTON A detected ->", other.upper())
+            wait_for_button_release()   # so the held press isn't taken as a brightness step
+            return other
         time.sleep(0.01)
 
-    print("Boot: no button -> FX SHOW")
-    return "fx"
+    print("Boot: no button ->", default.upper())
+    return default
 
 # -----------------------------
 # BRIGHTNESS CONTROL (BUTTON A during the FX show)
@@ -552,10 +563,10 @@ if __name__ == "__main__":
     mode = choose_boot_mode()
 
     if mode == "starfield":
-        print("MODE: STARFIELD (BUTTON A at boot)")
+        print("MODE: STARFIELD (press BUTTON A to switch to the FX show)")
         run_starfield_until_button()
         print("Starfield exited -> switching to FX SHOW")
     else:
-        print("MODE: FX SHOW (default)")
+        print("MODE: FX SHOW")
 
     run_full_effect_show()

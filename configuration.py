@@ -7,6 +7,16 @@ NUM_LEDS = 66
 BRIGHTNESS = 0.8
 
 # -----------------------------
+# START MODE
+# -----------------------------
+# What the board shows after power-on / reset:
+# "STARFIELD" = starfield + comets; press BUTTON A to move on to the FX show
+# "FX"        = go straight to the 77-effect show
+# Holding BUTTON A while pressing RESET starts the other one instead.
+#BOOT_MODE = "STARFIELD"
+BOOT_MODE = "FX"
+
+# -----------------------------
 # ORIENTATION CONTROL
 # -----------------------------
 # "BOTTOM" = 2350W is at the bottom, strip goes up
