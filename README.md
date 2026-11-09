@@ -41,9 +41,13 @@ ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
 ```
 NUM_LEDS = <NumberOfLEDS>
 ```
+In `main.py`:
 ```
-color_order=plasma.COLOR_ORDER_BRG
+color_order=plasma.COLOR_ORDER_GRB
 ```
+The effects are tuned for a strip that swaps red and green, so set this to your strip's real colour order with R and G swapped: an RGB strip uses `COLOR_ORDER_GRB`, a BGR strip uses `COLOR_ORDER_BRG`.
+
+Not sure what your strip is? Run `rgb_test.py` from Thonny: it lights the whole strip red, green, blue, then white, and the colours you actually see give the order. To check the setting, effect 70 should show red and white bars (not green and white).
 # 💫 Starfield Boot Mode
 
 Choose what the board starts with in `configuration.py`:
