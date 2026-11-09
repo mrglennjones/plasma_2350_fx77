@@ -7,6 +7,12 @@ from random import randrange, uniform, random, choice
 import eff
 from eff import *
 from configuration import *
+import configuration
+# older configuration.py files have no BOOT_MODE: default to the FX show
+BOOT_MODE = getattr(configuration, "BOOT_MODE", "FX")
+# older configuration.py files have no transition settings: use the defaults
+CROSSFADE_MS = getattr(configuration, "CROSSFADE_MS", 2500)
+CROSSFADE_STYLE = getattr(configuration, "CROSSFADE_STYLE", "OVERLAY")
 
 import plasma
 from os import uname
@@ -18,9 +24,64 @@ if 'Plasma Stick 2040' not in uname().machine:
     led = RGBLED("LED_R", "LED_G", "LED_B")
 
 class LedStrip(plasma.WS2812):
-    def __init__(self, *args, brightness=1.0, **kwargs):
-        super().__init__(*args, **kwargs)
+    """WS2812 strip with global brightness and transitions between effects.
+
+    It remembers the last value written to every LED, so the previous effect's
+    final frame is always stored. begin_crossfade() then combines each new
+    write with that stored frame for a short time (paused backdrop that the new
+    effect paints over, or a smooth blend), without any changes to the effects.
+    """
+    def __init__(self, num_leds, *args, brightness=1.0, **kwargs):
+        super().__init__(num_leds, *args, **kwargs)
         self.brightness = brightness
+        self._num = num_leds
+        # Last raw value per LED: ("h", h, s, v) or ("r", r, g, b) (0-255)
+        self._last = [("r", 0, 0, 0)] * num_leds
+        self._xf_from = None        # stored frame (RGB floats 0..1) while fading
+        self._xf_start = 0
+        self._xf_ms = 0
+        self._xf_overlay = True
+
+    def begin_crossfade(self, duration_ms, style="OVERLAY"):
+        """Start a transition from the frame currently on the strip.
+
+        "OVERLAY": the old frame is paused as a backdrop that holds, then fades
+                   away; the new effect paints over it wherever it is brighter.
+        "BLEND":   the old frame blends smoothly into the new effect.
+        """
+        self._xf_overlay = str(style).strip().upper() != "BLEND"
+        if duration_ms <= 0:
+            self._xf_from = None
+            return
+        frame = []
+        for item in self._last:
+            if item[0] == "h":
+                frame.append(hsv_to_rgb(item[1], item[2], item[3]))
+            else:
+                frame.append((item[1] / 255.0, item[2] / 255.0, item[3] / 255.0))
+        self._xf_from = frame
+        self._xf_start = time.ticks_ms()
+        self._xf_ms = duration_ms
+
+    def _blend(self, i, r, g, b):
+        """r, g, b as 0..1 floats; returns the crossfaded colour (or None when done)."""
+        k = time.ticks_diff(time.ticks_ms(), self._xf_start) / self._xf_ms
+        if k >= 1.0:
+            self._xf_from = None
+            return None
+        o = self._xf_from[i]
+        if self._xf_overlay:
+            # Paused backdrop: holds for the first 30%, then fades out
+            hold = 0.3
+            f = 1.0 if k < hold else 1.0 - (k - hold) / (1.0 - hold)
+            f = f * f * (3 - 2 * f)
+            orr, og, ob = o[0] * f, o[1] * f, o[2] * f
+            # The new effect paints over wherever it is brighter
+            if max(r, g, b) >= max(orr, og, ob):
+                return (r, g, b)
+            return (orr, og, ob)
+        k = k * k * (3 - 2 * k)               # ease in and out
+        return (o[0] + (r - o[0]) * k, o[1] + (g - o[1]) * k, o[2] + (b - o[2]) * k)
 
     @property
     def brightness(self):
@@ -32,12 +93,28 @@ class LedStrip(plasma.WS2812):
         self._brightness = max(0.0, min(1.0, value))
 
     def set_rgb(self, i, r, g, b):
+        self._last[i] = ("r", r, g, b)
+        if self._xf_from is not None:
+            mixed = self._blend(i, r / 255.0, g / 255.0, b / 255.0)
+            if mixed is not None:
+                r, g, b = mixed[0] * 255, mixed[1] * 255, mixed[2] * 255
         r = int(max(0, min(255, r * self.brightness)))
         g = int(max(0, min(255, g * self.brightness)))
         b = int(max(0, min(255, b * self.brightness)))
         super().set_rgb(i, r, g, b)
 
     def set_hsv(self, i, h, s, v):
+        self._last[i] = ("h", h, s, v)
+        if self._xf_from is not None:
+            nr, ng, nb = hsv_to_rgb(h, s, max(0.0, min(1.0, v)))
+            mixed = self._blend(i, nr, ng, nb)
+            if mixed is not None:
+                br = self.brightness
+                super().set_rgb(i,
+                                int(max(0, min(255, mixed[0] * 255 * br))),
+                                int(max(0, min(255, mixed[1] * 255 * br))),
+                                int(max(0, min(255, mixed[2] * 255 * br))))
+                return
         v = max(0, min(1, v * self.brightness))
         super().set_hsv(i, h, s, v)
 
@@ -48,11 +125,14 @@ class LedStrip(plasma.WS2812):
         self.brightness -= step
 
 
-# Set your led strip as R → G → B, order:
+# Colour order: the effects are tuned for a strip that swaps red and green,
+# so use the strip's real order with R and G swapped.
+# Run rgb_test.py to find your strip's order. RGB strip -> COLOR_ORDER_GRB (below);
+# BGR strip -> COLOR_ORDER_BRG. Check: effect 70 should show red and white bars.
 led_strip = LedStrip(
     NUM_LEDS,
     brightness=BRIGHTNESS,
-    color_order=plasma.COLOR_ORDER_BRG
+    color_order=plasma.COLOR_ORDER_GRB
 )
 led_strip.start()
 
@@ -425,6 +505,8 @@ def run_full_effect_show():
         start_ms = time.ticks_ms()
         print("Starting FX", fx_number, "-", fx_fn.__name__)
 
+        # Hand over from the last frame of the previous effect (overlay or blend)
+        led_strip.begin_crossfade(CROSSFADE_MS, CROSSFADE_STYLE)
         manager.run_current_effect()
 
         end_ms = time.ticks_ms()
@@ -442,16 +524,21 @@ def choose_boot_mode():
     BOOT_WINDOW_MS = 1200
     start = time.ticks_ms()
 
-    print("Boot: hold BUTTON A for STARFIELD; release for FX SHOW")
+    # BOOT_MODE in configuration.py picks the default; holding BUTTON A at
+    # boot starts the other mode instead.
+    default = "starfield" if str(BOOT_MODE).strip().upper() == "STARFIELD" else "fx"
+    other = "starfield" if default == "fx" else "fx"
+    print("Boot: default", default.upper(), "(BOOT_MODE); hold BUTTON A for", other.upper())
 
     while time.ticks_diff(time.ticks_ms(), start) < BOOT_WINDOW_MS:
         if button_pressed():
-            print("Boot: BUTTON A detected -> STARFIELD MODE")
-            return "starfield"
+            print("Boot: BUTTON A detected ->", other.upper())
+            wait_for_button_release()   # so the held press isn't taken as a brightness step
+            return other
         time.sleep(0.01)
 
-    print("Boot: no button -> FX SHOW")
-    return "fx"
+    print("Boot: no button ->", default.upper())
+    return default
 
 # -----------------------------
 # BRIGHTNESS CONTROL (BUTTON A during the FX show)
@@ -552,10 +639,10 @@ if __name__ == "__main__":
     mode = choose_boot_mode()
 
     if mode == "starfield":
-        print("MODE: STARFIELD (BUTTON A at boot)")
+        print("MODE: STARFIELD (press BUTTON A to switch to the FX show)")
         run_starfield_until_button()
         print("Starfield exited -> switching to FX SHOW")
     else:
-        print("MODE: FX SHOW (default)")
+        print("MODE: FX SHOW")
 
     run_full_effect_show()

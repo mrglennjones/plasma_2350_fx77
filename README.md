@@ -14,9 +14,10 @@ Orientation-aware engine
 Effects automatically adapt when the 2350W is mounted at the top or bottom of the strip.
 
 Starfield boot mode
-Hold BUTTON A (only supported on 2350W) on reset to launch the cinematic starfield mode.
+Start with the cinematic starfield or the FX show (`BOOT_MODE` in `configuration.py`); hold BUTTON A (only supported on 2350W) on reset for the other one.
 
 Continuous FX show with smooth transitions
+Each effect hands over to the next: the previous effect pauses on its last frame and fades away while the new one paints over it (`CROSSFADE_STYLE = "OVERLAY"`), or the two blend smoothly (`"BLEND"`). `CROSSFADE_MS` in `configuration.py` sets the length (default 2500 ms; 0 = hard cut).
 
 Random timing & variation
 
@@ -41,18 +42,25 @@ ORIENTATION = "BOTTOM"   # controller at bottom, LEDs go up
 ```
 NUM_LEDS = <NumberOfLEDS>
 ```
+In `main.py`:
 ```
-color_order=plasma.COLOR_ORDER_BRG
+color_order=plasma.COLOR_ORDER_GRB
 ```
+The effects are tuned for a strip that swaps red and green, so set this to your strip's real colour order with R and G swapped: an RGB strip uses `COLOR_ORDER_GRB`, a BGR strip uses `COLOR_ORDER_BRG`.
+
+Not sure what your strip is? Run `rgb_test.py` from Thonny: it lights the whole strip red, green, blue, then white, and the colours you actually see give the order. To check the setting, effect 70 should show red and white bars (not green and white).
 # 💫 Starfield Boot Mode
 
-Hold BUTTON A (only available on 2350W) while pressing RESET:
+Choose what the board starts with in `configuration.py`:
 
-Held: boot into the starfield + comets mode
+```
+BOOT_MODE = "FX"           # straight to the 77-effect automatic show (default)
+#BOOT_MODE = "STARFIELD"   # starfield + comets, then the FX show when BUTTON A is pressed
+```
 
-Not held: proceed to the 77-effect automatic show
+Hold BUTTON A (only available on 2350W) while pressing RESET to start the other mode instead, just for that boot.
 
-Starfield runs until the button is pressed again.
+Starfield runs until BUTTON A is pressed, then switches to the FX show.
 
 # 🚀 Getting Started
 
@@ -64,9 +72,7 @@ Starfield runs until the button is pressed again.
 
 - Reboot
 
-- Hold BUTTON A on boot for starfield mode
-
-Otherwise enjoy the full FX show.
+- It starts in the mode set by `BOOT_MODE` (the FX show unless you change it); hold BUTTON A on boot for the other one
 
 # 🖥️ Effect simulator
 
